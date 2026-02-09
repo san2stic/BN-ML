@@ -56,7 +56,9 @@ model_sync:
     status_url_template: "https://api.runpod.ai/v2/<ENDPOINT_ID>/status/{job_id}"
     api_key_env: "RUNPOD_API_KEY"
     trigger_method: "POST"
-    trigger_payload: {}
+    trigger_payload:
+      input:
+        prompt: "Train BN-ML models only (no trading bot execution) and return a downloadable models archive"
     headers: {}
     request_timeout_sec: 20
     poll_interval_sec: 10
@@ -97,3 +99,4 @@ docker compose --profile live up -d bot-live model-sync-runpod dashboard api pro
 - ne jamais commiter de clé API RunPod
 - conserver `extract_subdir: models` pour limiter l'extraction au sous-dossier attendu
 - en mode Git, garder un worktree propre (blocage par défaut)
+- le handler RunPod doit exécuter uniquement le training et produire une archive `models`, jamais `scripts.run_bot`

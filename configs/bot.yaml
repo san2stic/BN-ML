@@ -179,7 +179,7 @@ model_sync:
     trigger_method: POST
     trigger_payload:
       input:
-        prompt: "Train BN-ML models and return a downloadable models archive"
+        prompt: "Train BN-ML models only (no trading bot execution) and return a downloadable models archive"
     headers: {}
     request_timeout_sec: 20
     poll_interval_sec: 10
