@@ -14,9 +14,15 @@ class BinanceDataManager:
         self.config = config
         self.paper = paper
         self._exchange = None
+        mode = str(config.get("data", {}).get("paper_market_data_mode", "synthetic")).strip().lower()
+        self.paper_market_data_mode = mode
+        self._paper_use_live_market_data = self.paper and mode in {"live", "real", "exchange"}
+
+    def _use_synthetic_market_data(self) -> bool:
+        return self.paper and not self._paper_use_live_market_data
 
     def _build_exchange(self):
-        if self.paper:
+        if self._use_synthetic_market_data():
             return None
         if self._exchange is not None:
             return self._exchange
@@ -56,13 +62,19 @@ class BinanceDataManager:
         quote_u = str(quote).upper()
         configured_pairs = list(self.config.get("universe", {}).get("pairs", []))
 
-        if self.paper:
+        if self._use_synthetic_market_data():
             pairs = [p for p in configured_pairs if str(p).upper().endswith(f"/{quote_u}")]
             return pairs or configured_pairs
 
-        exchange = self._build_exchange()
-        tickers = call_with_retry(lambda: exchange.fetch_tickers(), retries=3)
-        markets = getattr(exchange, "markets", {}) or {}
+        try:
+            exchange = self._build_exchange()
+            tickers = call_with_retry(lambda: exchange.fetch_tickers(), retries=3)
+            markets = getattr(exchange, "markets", {}) or {}
+        except Exception:
+            if self.paper:
+                pairs = [p for p in configured_pairs if str(p).upper().endswith(f"/{quote_u}")]
+                return pairs or configured_pairs
+            raise
 
         ranked: list[tuple[str, float]] = []
         for symbol, ticker in tickers.items():
@@ -111,17 +123,22 @@ class BinanceDataManager:
         return pairs
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = "15m", limit: int = 500) -> pd.DataFrame:
-        if self.paper:
+        if self._use_synthetic_market_data():
             return self._generate_synthetic_ohlcv(symbol=symbol, timeframe=timeframe, limit=limit)
 
-        exchange = self._build_exchange()
-        raw = call_with_retry(lambda: exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit), retries=3)
-        df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-        return df
+        try:
+            exchange = self._build_exchange()
+            raw = call_with_retry(lambda: exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit), retries=3)
+            df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+            return df
+        except Exception:
+            if self.paper:
+                return self._generate_synthetic_ohlcv(symbol=symbol, timeframe=timeframe, limit=limit)
+            raise
 
     def fetch_ticker(self, symbol: str) -> dict:
-        if self.paper:
+        if self._use_synthetic_market_data():
             frame = self._generate_synthetic_ohlcv(symbol=symbol, timeframe="1m", limit=2)
             last = float(frame.iloc[-1]["close"])
             quote_vol = float(frame["close"].mul(frame["volume"]).sum())
@@ -133,8 +150,22 @@ class BinanceDataManager:
                 "quoteVolume": quote_vol,
             }
 
-        exchange = self._build_exchange()
-        return call_with_retry(lambda: exchange.fetch_ticker(symbol), retries=3)
+        try:
+            exchange = self._build_exchange()
+            return call_with_retry(lambda: exchange.fetch_ticker(symbol), retries=3)
+        except Exception:
+            if self.paper:
+                frame = self._generate_synthetic_ohlcv(symbol=symbol, timeframe="1m", limit=2)
+                last = float(frame.iloc[-1]["close"])
+                quote_vol = float(frame["close"].mul(frame["volume"]).sum())
+                return {
+                    "symbol": symbol,
+                    "last": last,
+                    "bid": last * 0.9998,
+                    "ask": last * 1.0002,
+                    "quoteVolume": quote_vol,
+                }
+            raise
 
     def fetch_last_price(self, symbol: str) -> float:
         ticker = self.fetch_ticker(symbol)
@@ -155,11 +186,16 @@ class BinanceDataManager:
         return ((ask - bid) / mid) * 100
 
     def fetch_orderbook_depth_usdt(self, symbol: str, depth_pct: float = 0.5) -> float:
-        if self.paper:
+        if self._use_synthetic_market_data():
             return 200_000.0
 
-        exchange = self._build_exchange()
-        orderbook = call_with_retry(lambda: exchange.fetch_order_book(symbol, limit=100), retries=3)
+        try:
+            exchange = self._build_exchange()
+            orderbook = call_with_retry(lambda: exchange.fetch_order_book(symbol, limit=100), retries=3)
+        except Exception:
+            if self.paper:
+                return 200_000.0
+            raise
 
         ticker = self.fetch_ticker(symbol)
         mid = float(ticker.get("last") or 0.0)
@@ -192,11 +228,16 @@ class BinanceDataManager:
         if symbol == "BTC/USDT":
             return 1.0
 
-        if self.paper:
+        if self._use_synthetic_market_data():
             return 0.5
 
-        target = self.fetch_ohlcv(symbol=symbol, timeframe=timeframe, limit=limit)
-        btc = self.fetch_ohlcv(symbol="BTC/USDT", timeframe=timeframe, limit=limit)
+        try:
+            target = self.fetch_ohlcv(symbol=symbol, timeframe=timeframe, limit=limit)
+            btc = self.fetch_ohlcv(symbol="BTC/USDT", timeframe=timeframe, limit=limit)
+        except Exception:
+            if self.paper:
+                return 0.5
+            raise
 
         target_ret = target["close"].pct_change().dropna()
         btc_ret = btc["close"].pct_change().dropna()

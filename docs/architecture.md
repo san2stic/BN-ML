@@ -9,6 +9,11 @@ Le système est composé de 5 blocs:
 3. `scanner/`: scoring multi-paires et ranking opportunités
 4. `trader/`: gestion des risques, ordres, positions
 5. `monitoring/`: logs, alertes, dashboard Streamlit
+6. `monitoring/realtime_prices.py`: websocket Binance temps réel (miniTicker multi-stream)
+7. `bn_ml/backup.py`: backups runtime périodiques (state/models/metrics/logs)
+8. `ml_engine/drift_monitor.py`: détection de drift/régime (KS + vol ratio)
+9. `ml_engine/sequence_model.py`: modèle séquentiel intégré à l’ensemble (backend MLP)
+10. `bn_ml/dod_checks.py`: checks quotidiens DoD + synthèse campagne
 
 ## Flux runtime (boucle bot)
 
@@ -21,8 +26,11 @@ Ordre d'exécution dans `scripts/run_bot.py`:
 5. Exécution ordre via order manager (paper/live)
 6. Persistance état/trades/cycles dans SQLite
 7. Export snapshot positions et métriques
+8. Backup horaire des artefacts critiques
 
 En mode continu, le dashboard peut être auto-lancé en sous-processus Streamlit.
+Le runtime peut aussi maintenir un stream websocket Binance pour alimenter les prix en quasi temps réel (fallback REST si indisponible).
+Un monitoring de drift est calculé à chaque cycle et peut activer un circuit breaker de blocage d'entrées.
 
 ## Retrain asynchrone
 
@@ -118,6 +126,7 @@ Sorties principales:
 - résumé backtest (`artifacts/metrics/backtest_summary.csv`)
 - scan complet (`artifacts/metrics/latest_scan.csv`)
 - opportunités retenues (`artifacts/metrics/latest_opportunities.csv`)
+- backups runtime (`artifacts/backups/<timestamp>/`)
 
 ## Dashboard Trader Terminal
 

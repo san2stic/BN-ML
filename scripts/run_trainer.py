@@ -252,6 +252,7 @@ def train_once(
                 "model_key": model_key,
                 "trained_at": datetime.now(timezone.utc).isoformat(),
                 "feature_columns": result.selected_features,
+                "model_types": sorted(list(result.models.keys())),
                 "best_params": result.best_params,
                 "dataset_rows": int(len(dataset)),
                 "label_counts": {str(k): int(v) for k, v in dataset["label"].value_counts().to_dict().items()},
@@ -260,6 +261,16 @@ def train_once(
                 "decision_params": result.decision_params,
                 "labeling": label_info,
                 "metrics": result.metrics,
+                "sequence": {
+                    "enabled": bool(config.get("model", {}).get("lstm", {}).get("enabled", False)),
+                    "sequence_length": int(
+                        config.get("model", {}).get("lstm", {}).get(
+                            "sequence_length",
+                            config.get("model", {}).get("sequence_length", 64),
+                        )
+                    ),
+                    "backend": "sequence_mlp" if "lstm" in result.models else "none",
+                },
             }
             (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 

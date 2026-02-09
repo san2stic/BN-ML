@@ -17,14 +17,17 @@ import pandas as pd
 from bn_ml.config import load_config
 from bn_ml.env import load_env_file
 from bn_ml.exchange import call_with_retry
+from bn_ml.backup import RuntimeBackupManager
 from bn_ml.state_store import StateStore
 from data_manager.data_cleaner import DataCleaner
 from data_manager.features_engineer import FeatureEngineer
 from data_manager.fetch_data import BinanceDataManager
 from ml_engine.adaptive_trainer import AdaptiveRetrainer, BackgroundRetrainWorker
+from ml_engine.drift_monitor import MarketDriftMonitor
 from ml_engine.predictor import MLEnsemblePredictor
 from monitoring.alerter import Alerter
 from monitoring.logger import setup_logger
+from monitoring.realtime_prices import BinanceRealtimePriceMonitor
 from scanner.opportunity_scanner import MultiPairScanner
 from scripts.run_trainer import train_once
 from trader.exit_manager import ExitManager
@@ -129,8 +132,9 @@ class TradingRuntime:
         self.config = config
         self.paper = paper
         self.logger = setup_logger(config)
-        self.alerter = Alerter(enabled=bool(config.get("monitoring", {}).get("alerts_enabled", True)))
+        self.alerter = Alerter(config=config, enabled=bool(config.get("monitoring", {}).get("alerts_enabled", True)))
         self.disable_retrain = disable_retrain
+        self.backup_manager = RuntimeBackupManager(config=config, logger=self.logger)
 
         db_path = str(config.get("storage", {}).get("sqlite_path", "artifacts/state/bn_ml.db"))
         self.store = StateStore(db_path=db_path)
@@ -153,13 +157,22 @@ class TradingRuntime:
         self.atr_ohlcv_limit = int(config.get("risk", {}).get("atr_ohlcv_limit", 150))
 
         self.risk_manager = RiskManager(config)
+        self.drift_monitor = MarketDriftMonitor(config)
         self.exit_manager = ExitManager(config)
         self.order_manager = OrderManager(config=config, paper=paper)
         self.position_manager = PositionManager(store=self.store)
+        rt_cfg = config.get("monitoring", {}).get("realtime_prices", {})
+        self.realtime_prices = BinanceRealtimePriceMonitor(
+            enabled=bool(rt_cfg.get("enabled", True)),
+            max_symbols=int(rt_cfg.get("max_symbols", 30)),
+            reconnect_delay_sec=float(rt_cfg.get("reconnect_delay_sec", 3.0)),
+            logger=self.logger,
+        )
 
         self._universe_cache_pairs: list[str] = []
         self._universe_cache_ts: float = 0.0
         self._preflight_runtime()
+        self._sync_realtime_price_stream(force=True)
         self.store.save_account_state(self.account_state)
         self._start_retrain_worker_if_enabled()
 
@@ -429,6 +442,32 @@ class TradingRuntime:
         if self.retrain_worker is not None:
             self.retrain_worker.stop(timeout_sec=30.0)
             self.retrain_worker = None
+        self.realtime_prices.stop()
+
+    def _sync_realtime_price_stream(self, force: bool = False) -> None:
+        rt_cfg = self.config.get("monitoring", {}).get("realtime_prices", {})
+        if not bool(rt_cfg.get("enabled", True)):
+            return
+
+        max_symbols = max(1, int(rt_cfg.get("max_symbols", 30)))
+        include_scan_pairs = bool(rt_cfg.get("include_scan_pairs", True))
+        symbols: list[str] = []
+
+        for position in self.position_manager.get_open_positions():
+            if position.symbol not in symbols:
+                symbols.append(position.symbol)
+
+        if include_scan_pairs and len(symbols) < max_symbols:
+            pairs = self._resolve_pairs_for_scan(force_refresh=False)
+            for pair in pairs:
+                if pair not in symbols:
+                    symbols.append(pair)
+                if len(symbols) >= max_symbols:
+                    break
+
+        if not symbols:
+            return
+        self.realtime_prices.update_symbols(symbols[:max_symbols])
 
     def _preflight_runtime(self) -> None:
         if self.paper:
@@ -488,6 +527,17 @@ class TradingRuntime:
             "weekly_realized_usdt": 0.0,
             "consecutive_losses": 0,
             "market_volatility_ratio": 1.0,
+            "market_volatility_current_atr_ratio": 0.0,
+            "market_volatility_baseline_atr_ratio": 0.0,
+            "market_volatility_symbol": "",
+            "market_volatility_updated_at": None,
+            "market_drift_detected": False,
+            "market_drift_ks_stat": 0.0,
+            "market_drift_p_value": 1.0,
+            "market_drift_vol_ratio": 1.0,
+            "market_regime": "unknown",
+            "market_drift_symbol": "",
+            "market_drift_updated_at": None,
             "win_rate": 0.56,
             "avg_win": 1.8,
             "avg_loss": 1.0,
@@ -562,6 +612,84 @@ class TradingRuntime:
         stats = self.store.recent_sell_stats(hours=24)
         if stats.get("count", 0.0) > 0:
             self.account_state["current_win_rate_24h"] = float(stats.get("win_rate", 0.0))
+
+    def _update_market_volatility_ratio(self) -> None:
+        risk_cfg = self.config.get("risk", {})
+        baseline_window = max(20, int(risk_cfg.get("volatility_baseline_window", 96)))
+        limit = max(self.atr_ohlcv_limit, baseline_window + 5)
+
+        configured_symbol = str(risk_cfg.get("volatility_benchmark_symbol", "")).strip().upper()
+        quote = self._quote_asset()
+        symbols_to_try: list[str] = []
+        for symbol in [configured_symbol, f"BTC/{quote}", "BTC/USDT"]:
+            if symbol and symbol not in symbols_to_try:
+                symbols_to_try.append(symbol)
+
+        for symbol in symbols_to_try:
+            try:
+                frame = self.data_manager.fetch_ohlcv(symbol=symbol, timeframe=self.base_timeframe, limit=limit)
+                frame = self.cleaner.clean_ohlcv(frame)
+                frame = self.features.build(frame)
+                atr = pd.to_numeric(frame.get("atr_ratio"), errors="coerce").replace(
+                    [float("inf"), float("-inf")],
+                    pd.NA,
+                )
+                atr = atr.dropna()
+                if atr.empty or len(atr) < 3:
+                    continue
+
+                current = float(atr.iloc[-1])
+                history = atr.iloc[:-1].tail(baseline_window)
+                baseline = float(history.median()) if not history.empty else 0.0
+                if baseline <= 0:
+                    baseline = float(self.account_state.get("market_volatility_baseline_atr_ratio", current))
+                baseline = max(baseline, 1e-9)
+
+                ratio = max(0.10, min(5.0, current / baseline))
+                self.account_state["market_volatility_ratio"] = float(ratio)
+                self.account_state["market_volatility_current_atr_ratio"] = current
+                self.account_state["market_volatility_baseline_atr_ratio"] = baseline
+                self.account_state["market_volatility_symbol"] = symbol
+                self.account_state["market_volatility_updated_at"] = datetime.now(timezone.utc).isoformat()
+                return
+            except Exception:
+                continue
+
+        self.logger.warning("Unable to refresh market_volatility_ratio this cycle.")
+
+    def _update_market_drift_state(self) -> None:
+        if not self.drift_monitor.enabled:
+            self.account_state["market_drift_detected"] = False
+            self.account_state["market_regime"] = "disabled"
+            return
+
+        risk_cfg = self.config.get("risk", {})
+        configured_symbol = str(risk_cfg.get("drift_benchmark_symbol", "")).strip().upper()
+        quote = self._quote_asset()
+        symbols_to_try: list[str] = []
+        for symbol in [configured_symbol, f"BTC/{quote}", "BTC/USDT"]:
+            if symbol and symbol not in symbols_to_try:
+                symbols_to_try.append(symbol)
+
+        limit = self.drift_monitor.baseline_window + self.drift_monitor.recent_window + 8
+        for symbol in symbols_to_try:
+            try:
+                frame = self.data_manager.fetch_ohlcv(symbol=symbol, timeframe=self.base_timeframe, limit=limit)
+                if frame.empty or "close" not in frame.columns:
+                    continue
+                drift = self.drift_monitor.evaluate_from_close(frame["close"])
+                self.account_state["market_drift_detected"] = bool(drift.drift_detected)
+                self.account_state["market_drift_ks_stat"] = float(drift.ks_stat)
+                self.account_state["market_drift_p_value"] = float(drift.p_value)
+                self.account_state["market_drift_vol_ratio"] = float(drift.vol_ratio)
+                self.account_state["market_regime"] = str(drift.regime)
+                self.account_state["market_drift_symbol"] = symbol
+                self.account_state["market_drift_updated_at"] = datetime.now(timezone.utc).isoformat()
+                return
+            except Exception:
+                continue
+
+        self.logger.warning("Unable to refresh market drift state this cycle.")
 
     def _estimate_atr_value(self, symbol: str, price: float) -> float:
         frame = self.data_manager.fetch_ohlcv(symbol=symbol, timeframe=self.base_timeframe, limit=self.atr_ohlcv_limit)
@@ -657,7 +785,9 @@ class TradingRuntime:
 
         for position in list(self.position_manager.get_open_positions()):
             try:
-                price = self.data_manager.fetch_last_price(position.symbol)
+                price = self.realtime_prices.get_price(position.symbol)
+                if price is None or price <= 0:
+                    price = self.data_manager.fetch_last_price(position.symbol)
                 atr_value = self._estimate_atr_value(symbol=position.symbol, price=price)
 
                 decision = self.exit_manager.evaluate_long(position=position, price=price, atr_value=atr_value, now=now)
@@ -751,10 +881,13 @@ class TradingRuntime:
         return full_closes, partial_closes
 
     def run_cycle(self) -> None:
+        self._sync_realtime_price_stream(force=False)
         self._sync_live_capital()
         self.store.save_account_state(self.account_state)
         full_closes, partial_closes = self._manage_open_positions()
         self._refresh_recent_performance()
+        self._update_market_volatility_ratio()
+        self._update_market_drift_state()
 
         pairs = self._resolve_pairs_for_scan(force_refresh=False)
         with self._model_components_lock:
@@ -778,6 +911,11 @@ class TradingRuntime:
 
                 if not allowed:
                     self.logger.info("Skip %s: %s", opp.symbol, "; ".join(reasons))
+                    if any(
+                        ("circuit breaker" in reason.lower()) or ("risk budget exhausted" in reason.lower())
+                        for reason in reasons
+                    ):
+                        self.alerter.send(f"Risk gate blocked {opp.symbol}: {'; '.join(reasons)}")
                     continue
 
                 price = self.data_manager.fetch_last_price(opp.symbol)
@@ -785,6 +923,7 @@ class TradingRuntime:
                 pos = self.order_manager.place_market_buy(opp.symbol, size_usdt=size_usdt, price=price, atr=atr_value)
                 self.position_manager.add(pos)
                 opened_count += 1
+                risk_snapshot = self.risk_manager.risk_budget_snapshot(account_state=self.account_state, size_usdt=size_usdt)
 
                 self.store.insert_trade(
                     symbol=pos.symbol,
@@ -792,7 +931,17 @@ class TradingRuntime:
                     size_usdt=pos.size_usdt,
                     price=pos.entry_price,
                     mode="paper" if self.paper else "live",
-                    extra={"confidence": opp.signal.confidence, "global_score": opp.global_score},
+                    extra={
+                        "confidence": opp.signal.confidence,
+                        "global_score": opp.global_score,
+                        "daily_risk_used_pct": risk_snapshot.get("daily_used_pct", 0.0),
+                        "weekly_risk_used_pct": risk_snapshot.get("weekly_used_pct", 0.0),
+                        "daily_risk_with_trade_pct": risk_snapshot.get("daily_used_with_trade_pct", 0.0),
+                        "weekly_risk_with_trade_pct": risk_snapshot.get("weekly_used_with_trade_pct", 0.0),
+                        "market_volatility_ratio": float(self.account_state.get("market_volatility_ratio", 1.0)),
+                        "market_drift_detected": bool(self.account_state.get("market_drift_detected", False)),
+                        "market_regime": str(self.account_state.get("market_regime", "unknown")),
+                    },
                 )
                 self.logger.info("OPEN %s size=%.2f entry=%.4f", pos.symbol, pos.size_usdt, pos.entry_price)
             except Exception as exc:
@@ -813,6 +962,7 @@ class TradingRuntime:
         self._sync_live_capital()
         self.store.save_account_state(self.account_state)
         self.store.export_positions_snapshot()
+        self.backup_manager.maybe_backup(force=False)
 
         if opened_count == 0 and full_closes == 0 and partial_closes == 0:
             self.alerter.send("No position changes in this cycle.")

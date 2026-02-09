@@ -9,6 +9,9 @@ exchange:
   retry_attempts: 3
   retry_backoff_sec: 0.5
 
+data:
+  paper_market_data_mode: live
+
 universe:
   dynamic_base_quote_pairs: true
   dynamic_refresh_sec: 900
@@ -138,9 +141,20 @@ model:
     min_child_samples: 30
   lstm:
     enabled: false
+    sequence_length: 64
+    hidden_size: 128
+    hidden_size_2: 64
     epochs: 30
     batch_size: 64
     dropout: 0.25
+    alpha: 0.0001
+  drift:
+    enabled: true
+    baseline_window: 240
+    recent_window: 64
+    ks_threshold: 0.24
+    p_value_threshold: 0.05
+    vol_ratio_threshold: 1.8
 
 risk:
   capital_total: auto
@@ -168,12 +182,34 @@ risk:
     daily_drawdown_stop_pct: -5.0
     max_consecutive_losses: 3
     volatility_spike_ratio: 1.5
+    drift_block_enabled: true
+  drift_benchmark_symbol: ""
 
 monitoring:
   log_level: INFO
   logs_dir: artifacts/logs
   metrics_dir: artifacts/metrics
   alerts_enabled: true
+  realtime_prices:
+    enabled: true
+    include_scan_pairs: true
+    max_symbols: 30
+    reconnect_delay_sec: 3.0
+  alerting:
+    timeout_sec: 4.0
+    dedupe_sec: 30
+    webhook_url: ""
+    telegram_bot_token: ""
+    telegram_chat_id: ""
+    email:
+      smtp_host: ""
+      smtp_port: 587
+      smtp_username: ""
+      smtp_password: ""
+      from: ""
+      to: []
+      use_tls: true
+      subject_prefix: "[BN-ML ALERT]"
   dashboard:
     auto_launch_with_bot: true
     script: monitoring/dashboard.py
@@ -187,3 +223,12 @@ monitoring:
 
 storage:
   sqlite_path: artifacts/state/bn_ml.db
+  backup:
+    enabled: true
+    base_dir: artifacts/backups
+    interval_minutes: 60
+    keep_last: 48
+    include_state_db: true
+    include_models: true
+    include_metrics: true
+    include_logs: false

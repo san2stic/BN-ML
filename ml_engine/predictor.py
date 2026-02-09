@@ -25,7 +25,7 @@ class MLEnsemblePredictor:
 
     def _load_model_bundle(self, directory: Path) -> dict:
         models = {}
-        for name in ["rf", "xgb", "lgb"]:
+        for name in ["rf", "xgb", "lgb", "lstm"]:
             path = directory / f"{name}.joblib"
             if path.exists():
                 try:
@@ -86,9 +86,12 @@ class MLEnsemblePredictor:
         model_votes: dict[str, int] = {}
 
         for name, model in models.items():
-            pred = int(model.predict(row)[0])
+            model_input = self._model_input(name=name, frame=frame, features=active_features, row=row)
+            if model_input is None:
+                continue
+            pred = int(self._predict_latest(model=model, model_input=model_input))
             model_votes[name] = pred
-            model_proba = self._model_proba(model=model, row=row, pred=pred)
+            model_proba = self._model_proba(model=model, model_input=model_input, pred=pred)
             aggregated_proba += ensemble_weights.get(name, 0.0) * model_proba
 
         if float(np.sum(aggregated_proba)) <= 1e-12:
@@ -151,6 +154,34 @@ class MLEnsemblePredictor:
         return arr
 
     @staticmethod
+    def _build_matrix(frame: pd.DataFrame, features: list[str]) -> np.ndarray | None:
+        if frame.empty or not features:
+            return None
+        cols = []
+        for name in features:
+            if name in frame.columns:
+                cols.append(pd.to_numeric(frame[name], errors="coerce").fillna(0.0))
+            else:
+                cols.append(pd.Series([0.0] * len(frame), index=frame.index))
+        if not cols:
+            return None
+        mat = np.column_stack([c.to_numpy(dtype=float) for c in cols])
+        return np.nan_to_num(mat, nan=0.0, posinf=0.0, neginf=0.0)
+
+    @classmethod
+    def _model_input(cls, name: str, frame: pd.DataFrame, features: list[str], row: np.ndarray | None) -> np.ndarray | None:
+        if name == "lstm":
+            return cls._build_matrix(frame=frame, features=features)
+        return row
+
+    @staticmethod
+    def _predict_latest(model, model_input: np.ndarray) -> int:
+        preds = np.asarray(model.predict(model_input))
+        if preds.size == 0:
+            return 1
+        return int(preds[-1])
+
+    @staticmethod
     def _resolve_ensemble_weights(models: dict[str, object], metadata: dict) -> dict[str, float]:
         raw = metadata.get("ensemble_weights", {})
         weights: dict[str, float] = {}
@@ -169,7 +200,7 @@ class MLEnsemblePredictor:
         return {name: float(weight / total) for name, weight in weights.items()}
 
     @staticmethod
-    def _model_proba(model, row: np.ndarray, pred: int) -> np.ndarray:
+    def _model_proba(model, model_input: np.ndarray, pred: int) -> np.ndarray:
         one_hot = np.zeros(3, dtype=float)
         one_hot[int(np.clip(pred, 0, 2))] = 1.0
 
@@ -177,7 +208,8 @@ class MLEnsemblePredictor:
             return one_hot
 
         try:
-            raw = np.asarray(model.predict_proba(row)[0], dtype=float)
+            all_rows = np.asarray(model.predict_proba(model_input), dtype=float)
+            raw = np.asarray(all_rows[-1], dtype=float) if all_rows.ndim == 2 else np.asarray(all_rows, dtype=float)
         except Exception:
             return one_hot
         if raw.size == 0:

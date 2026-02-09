@@ -16,6 +16,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.metrics import accuracy_score, f1_score
 
 from bn_ml.hardware import resolve_xgb_device
+from ml_engine.sequence_model import SequenceMLPClassifier
 
 logger = logging.getLogger("bn_ml.trainer")
 
@@ -79,6 +80,8 @@ class EnsembleTrainer:
         self.allow_cuda_fallback = bool(self.accel_cfg.get("allow_cuda_fallback", True))
         self.xgb_device, self.xgb_device_reason = resolve_xgb_device(str(self.accel_cfg.get("mode", "auto")))
         self.ensemble_cfg = self.model_cfg.get("ensemble", {})
+        self.lstm_cfg = self.model_cfg.get("lstm", {})
+        self.lstm_enabled = bool(self.lstm_cfg.get("enabled", False))
         self._purge_gap = max(0, int(self.model_cfg.get("labeling", {}).get("horizon_candles", 4)))
 
         risk_cfg = config.get("risk", {})
@@ -149,6 +152,20 @@ class EnsembleTrainer:
                 best_params["lgb"] = lgb_params
             self._collect_train_metrics(metrics, "lgb", lgb_model, x, y, close)
             metrics.update(lgb_extra_metrics)
+
+        # --- Train sequence model (lstm config path, MLP backend fallback) ---
+        if self.lstm_enabled:
+            try:
+                lstm_model = self._build_sequence_model()
+                lstm_cv_acc = self._cross_val_accuracy(lstm_model, x, y)
+                lstm_model.fit(x, y)
+                models["lstm"] = lstm_model
+                metrics["lstm_cv_accuracy"] = lstm_cv_acc
+                metrics["lstm_backend_sequence_mlp"] = 1.0
+                self._collect_train_metrics(metrics, "lstm", lstm_model, x, y, close)
+            except Exception as exc:
+                logger.warning("LSTM path enabled but training failed; skipping sequence model: %s", exc)
+                metrics["lstm_backend_sequence_mlp"] = 0.0
 
         # --- RF train metrics ---
         self._collect_train_metrics(metrics, "rf", rf, x, y, close)
@@ -654,6 +671,19 @@ class EnsembleTrainer:
             random_state=self.random_state,
             n_jobs=self.cpu_n_jobs,
             class_weight="balanced_subsample",
+        )
+
+    def _build_sequence_model(self) -> SequenceMLPClassifier:
+        sequence_length = int(self.lstm_cfg.get("sequence_length", self.model_cfg.get("sequence_length", 64)))
+        hidden1 = int(self.lstm_cfg.get("hidden_size", 128))
+        hidden2 = int(self.lstm_cfg.get("hidden_size_2", max(32, hidden1 // 2)))
+        hidden_layers = (hidden1, hidden2)
+        return SequenceMLPClassifier(
+            sequence_length=sequence_length,
+            hidden_layer_sizes=hidden_layers,
+            alpha=float(self.lstm_cfg.get("alpha", 1e-4)),
+            max_iter=int(self.lstm_cfg.get("epochs", 30)) * 8,
+            random_state=self.random_state,
         )
 
     def _build_xgb(self, params: dict[str, Any], use_early_stopping: bool, device_override: str | None = None):

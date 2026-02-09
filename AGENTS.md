@@ -1,6 +1,6 @@
 # AGENTS.md - BN-ML Binance Spot ML Trading Bot
 
-Derniere mise a jour: 2026-02-09 (audit code + tests local).
+Derniere mise a jour: 2026-02-09 (P0+P1+P2 code/tests integres localement).
 
 ## 1) Mission
 Construire un systeme de trading Binance Spot pilote par ML, avec priorite absolue:
@@ -22,12 +22,12 @@ Hors perimetre:
 
 ## 3) Etat reel du projet (audit 2026-02-09)
 Statut global:
-- Scanner multi-paires: `PARTIEL` (polling 5 min, pas de websocket temps reel actif).
+- Scanner multi-paires: `PARTIEL` (polling 5 min; websocket prix temps reel actif pour positions/paires suivies, pas encore event-driven scanner complet).
 - Execution ordres: `OK` (paper/live, precision/filters exchange, retry).
-- Money management: `PARTIEL` (plusieurs garde-fous actifs, mais tous les budgets risque ne sont pas bloques).
+- Money management: `OK` (budgets risque jour/semaine bloques en pre-trade + breakers drawdown/pertes/vol/drift).
 - Entrainement adaptatif: `OK` (RF/XGB/LGB, HPO walk-forward, retrain async).
-- Monitoring: `PARTIEL` (dashboard Streamlit riche, alerting externe non implemente).
-- Paper trading: `OK` (end-to-end), avec donnees synthetiques en mode paper.
+- Monitoring: `OK` (dashboard + alerting webhook/Telegram/email + backups runtime).
+- Paper trading: `OK` (end-to-end), avec mode donnees reelles Binance en paper (+ fallback synthetique).
 
 ## 4) Architecture actuelle
 ```text
@@ -89,9 +89,10 @@ Modeles actifs:
 - `RandomForestClassifier`
 - `XGBoostClassifier`
 - `LightGBMClassifier` (si dispo)
+- `SequenceMLP` via chemin `model.lstm` (modele sequence integre a l'ensemble et serialise `lstm.joblib`)
 
 Non implemente a date:
-- `LSTM` (present en config, mais pipeline d'entrainement/prediction non branche)
+- `LSTM` deep learning natif (TensorFlow/PyTorch) non obligatoire; backend sequence operationnel livre via sklearn.
 
 Points cle:
 - labels multiclasses `SELL/HOLD/BUY` avec edge dynamique base vol + ATR + couts
@@ -125,14 +126,13 @@ Actif aujourd'hui:
 - circuit breakers: drawdown journalier, pertes consecutives, volatilite ratio
 
 Points a renforcer:
-- budget risque journalier/hebdo (`max_daily_risk_pct`, `max_weekly_risk_pct`) pas strictement bloque en pre-trade
-- `market_volatility_ratio` est peu alimente (breaker vol potentiellement inactif)
-- suivi weekly breaker surtout cote dashboard, pas bloqueur central explicite
+- calibration fine des seuils drift/vol selon regime reel (a ajuster apres paper run long)
+- hardening resilience reseau pour alerting externe (retry file/outbox)
 
 ## 9) Data & execution
 Data manager:
 - live: CCXT Binance Spot
-- paper: generation OHLCV synthetique deterministe
+- paper: mode `data.paper_market_data_mode=live` (historique+ticker Binance) avec fallback synthetique deterministe
 - univers dynamique `*/base_quote` avec filtres volume + exclusions assets non souhaites
 
 Execution:
@@ -150,12 +150,14 @@ Stockage:
 
 Monitoring:
 - dashboard Streamlit "Trader Terminal" (auto-launch possible)
-- alerter actuel: logs warning (pas Telegram/Email natif)
+- alerting externe: webhook / Telegram / SMTP email (+ dedupe)
+- realtime price monitor websocket Binance (miniTicker)
+- backups runtime periodiques (`artifacts/backups/`)
 - kill switch disponible: `python3 -m scripts.kill_switch`
 
 ## 11) Qualite et tests
 Etat tests au 2026-02-09:
-- `37 passed` via `python3 -m pytest -q`
+- `60 passed` via `python3 -m pytest -q`
 
 Couverture fonctionnelle verifiee:
 - retrain adaptatif/background worker
@@ -169,18 +171,18 @@ Couverture fonctionnelle verifiee:
 
 ## 12) Gaps prioritaires avant "v1 robuste"
 P0 (bloquant live scale):
-1. verrouiller l'application stricte des limites risque jour/semaine en pre-trade
-2. alimenter/calculer `market_volatility_ratio` en runtime
-3. remplacer le mode paper synthetique par un paper base sur donnees reelles (historique + ticker live)
+1. `DONE` verrouiller l'application stricte des limites risque jour/semaine en pre-trade
+2. `DONE` alimenter/calculer `market_volatility_ratio` en runtime
+3. `DONE` remplacer le mode paper synthetique par un paper base sur donnees reelles (historique + ticker live)
 
 P1 (fortement recommande):
-1. websocket temps reel top paires (au moins pour monitoring positions)
-2. alerting externe (Telegram/Email/webhook)
-3. backup horaire automatise modeles + etat
+1. `DONE` websocket temps reel top paires (monitoring positions + paires suivies)
+2. `DONE` alerting externe (Telegram/Email/webhook)
+3. `DONE` backup horaire automatise modeles + etat
 
 P2 (evolution ML):
-1. integrer LSTM sequence proprement (train + infer + metadata)
-2. introduire gestion explicite du regime change (ex: KS drift test runtime)
+1. `DONE (backend sequence_mlp)` integrer chemin sequence `model.lstm` (train + infer + metadata)
+2. `DONE` gestion explicite du regime change (KS drift + vol ratio runtime)
 
 ## 13) Roadmap mise a jour
 Phase 1 - Fondations: `MAJORITAIREMENT DONE`
@@ -188,14 +190,15 @@ Phase 1 - Fondations: `MAJORITAIREMENT DONE`
 
 Phase 2 - ML: `EN COURS AVANCE`
 - labels dynamiques, trainer RF/XGB/LGB, walk-forward/HPO, model bundles per symbol
-- reste: LSTM operationnel + drift monitoring avance
+- sequence `model.lstm` operationnel (backend sequence_mlp) + drift monitoring runtime en place
 
 Phase 3 - Trading live controle: `EN COURS`
 - scanner, risk manager, order/position manager, dashboard
 - reste: alerting externe + enforcement risque complet
 
 Phase 4 - Hardening: `A PRIORISER`
-- tests integration resilience, optimisation latence/couts API, runbook incident
+- tests integration resilience, optimisation latence/couts API
+- runbook incident + documentation deploiement Docker: `DONE` (`docs/runbook_incident.md`, `docs/deployment_docker.md`)
 
 ## 14) Definition of Done v1 (reconfirmee)
 Le systeme est "pret v1" uniquement si:

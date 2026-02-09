@@ -39,6 +39,7 @@ Modes:
 - `environment: live` pour réel
 - en live, `exchange.testnet` doit être `false`
 - `risk.capital_total: auto` pour utiliser automatiquement le capital réel Binance (authentifié) en mode live
+- `data.paper_market_data_mode: live` pour paper trading sur données de marché Binance réelles (fallback synthétique si indisponible)
 
 Universe dynamique:
 - `universe.dynamic_base_quote_pairs: true` pour scanner toutes les paires `*/base_quote` (ex: `*/USDC`)
@@ -56,6 +57,20 @@ Auto-retrain en fond (thread séparé):
 - `model.auto_train_missing_batch_size: 5` limite les auto-trains manquants par batch
 - `model.auto_train_missing_disable_hpo: true` accélère l'auto-train manquant (désactive HPO sur ce flux)
 
+Monitoring et alerting runtime:
+- `monitoring.realtime_prices.enabled: true` active le flux websocket Binance pour suivi prix temps réel (positions + paires scannées)
+- `monitoring.alerting.webhook_url` pour webhook externe
+- `monitoring.alerting.telegram_bot_token` + `monitoring.alerting.telegram_chat_id` pour Telegram
+- `monitoring.alerting.email.*` pour SMTP email
+- `model.drift.*` active le monitoring runtime de drift régime (KS + ratio de volatilité)
+- `risk.circuit_breakers.drift_block_enabled: true` bloque les nouvelles entrées si drift détecté
+
+Backups automatiques:
+- `storage.backup.enabled: true`
+- `storage.backup.interval_minutes: 60`
+- `storage.backup.keep_last: 48`
+- `storage.backup.base_dir: artifacts/backups`
+
 Analyse multi-timeframe (MTF):
 - `model.multi_timeframe.enabled: true` active la fusion multi-timeframe
 - `model.multi_timeframe.base_timeframe: 15m` timeframe principal
@@ -63,6 +78,7 @@ Analyse multi-timeframe (MTF):
 - `model.multi_timeframe.feature_columns` features HTF à projeter sur le timeframe de base
 - `model.multi_timeframe.min_candles_per_timeframe` / `max_candles_per_timeframe` / `extra_candles_buffer` pour contrôler la profondeur de chaque HTF
 - les signaux de confluence sont ajoutés automatiquement (`mtf_trend_consensus`, `mtf_macd_consensus`, `mtf_confluence_score`, etc.)
+- `model.lstm.enabled: true` active un modèle séquentiel entraîné et inféré dans l’ensemble (backend `sequence_mlp`, compatible joblib)
 
 ## 3) Commandes principales
 
@@ -94,6 +110,12 @@ Lancer un cycle unique bot (paper):
 
 ```bash
 python3 -m scripts.run_bot --once --paper
+```
+
+Campagne DoD paper 30 jours (checks quotidiens + rapport final):
+
+```bash
+python3 -m scripts.run_dod_30d --days 30 --disable-retrain
 ```
 
 Lancer en live continu:
@@ -128,6 +150,18 @@ Kill switch (fermeture d'urgence):
 python3 -m scripts.kill_switch
 ```
 
+Check quotidien DoD:
+
+```bash
+python3 -m scripts.check_dod_daily --fail-on-violation
+```
+
+Rapport synthese DoD:
+
+```bash
+python3 -m scripts.generate_dod_report --days 30
+```
+
 ## 4) Dashboard "Trader Terminal"
 
 Le dashboard inclut:
@@ -136,6 +170,7 @@ Le dashboard inclut:
 - filtre timeframe (`15m`, `1h`, `4h`, `1d`, `1w`, `all`)
 - panneaux détachables (workspace par onglets)
 - watchlist sticky, heatmap opportunités, equity/drawdown, blotter, cycle feed
+- monitor live des prix via websocket quand activé
 
 Paramètres dans `configs/bot.yaml`:
 - `monitoring.dashboard.auto_launch_with_bot`
@@ -206,6 +241,7 @@ Recommandations:
 - API key trading avec whitelist IP
 - commencer par paper trading prolongé
 - garder `scripts.kill_switch` prêt
+- brancher au moins un canal `monitoring.alerting` (webhook/Telegram/email) avant live continu
 
 ## 8) Fichiers importants
 
@@ -217,6 +253,9 @@ Recommandations:
 - `artifacts/logs/dashboard.log`: logs Streamlit
 - `artifacts/metrics/latest_scan.csv`: snapshot complet des paires scannées
 - `artifacts/metrics/latest_opportunities.csv`: opportunités retenues par les filtres
+- `artifacts/reports/dod/`: checks quotidiens + rapport DoD
+- `docs/runbook_incident.md`: procedures incident
+- `docs/deployment_docker.md`: deploiement Docker
 
 ## 9) Checklist avant push Git
 

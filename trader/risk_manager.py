@@ -11,6 +11,61 @@ class RiskManager:
         self.risk_cfg = config.get("risk", {})
         self.scanner_cfg = config.get("scanner", {})
 
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _to_fraction(value: Any, default: float) -> float:
+        raw = RiskManager._to_float(value, default)
+        if raw > 1.0:
+            raw = raw / 100.0
+        return max(0.0, raw)
+
+    @staticmethod
+    def _risk_budget_used_pct(realized_usdt: float, total_capital: float, fallback_pnl_pct: float) -> float:
+        if total_capital > 0:
+            return max(0.0, (-realized_usdt / total_capital) * 100.0)
+        return max(0.0, -fallback_pnl_pct)
+
+    def risk_budget_snapshot(self, account_state: dict[str, float], size_usdt: float = 0.0) -> dict[str, float]:
+        total_capital = max(
+            self._to_float(account_state.get("total_capital"), 0.0),
+            self._to_float(account_state.get("active_capital"), 0.0),
+            1e-9,
+        )
+        max_daily_risk_frac = self._to_fraction(self.risk_cfg.get("max_daily_risk_pct", 0.02), default=0.02)
+        max_weekly_risk_frac = self._to_fraction(self.risk_cfg.get("max_weekly_risk_pct", 0.06), default=0.06)
+        per_trade_risk_frac = self._to_fraction(self.risk_cfg.get("max_position_drawdown_pct", 0.03), default=0.03)
+
+        daily_realized_usdt = self._to_float(account_state.get("daily_realized_usdt"), 0.0)
+        weekly_realized_usdt = self._to_float(account_state.get("weekly_realized_usdt"), 0.0)
+        daily_used_pct = self._risk_budget_used_pct(
+            realized_usdt=daily_realized_usdt,
+            total_capital=total_capital,
+            fallback_pnl_pct=self._to_float(account_state.get("daily_pnl_pct"), 0.0),
+        )
+        weekly_used_pct = self._risk_budget_used_pct(
+            realized_usdt=weekly_realized_usdt,
+            total_capital=total_capital,
+            fallback_pnl_pct=self._to_float(account_state.get("weekly_pnl_pct"), 0.0),
+        )
+        projected_trade_risk_pct = (self._to_float(size_usdt, 0.0) * per_trade_risk_frac / total_capital) * 100.0
+
+        return {
+            "total_capital": total_capital,
+            "daily_used_pct": daily_used_pct,
+            "weekly_used_pct": weekly_used_pct,
+            "daily_budget_pct": max_daily_risk_frac * 100.0,
+            "weekly_budget_pct": max_weekly_risk_frac * 100.0,
+            "projected_trade_risk_pct": projected_trade_risk_pct,
+            "daily_used_with_trade_pct": daily_used_pct + projected_trade_risk_pct,
+            "weekly_used_with_trade_pct": weekly_used_pct + projected_trade_risk_pct,
+        }
+
     def can_open_position(
         self,
         opportunity: Opportunity,
@@ -51,12 +106,33 @@ class RiskManager:
             self.risk_cfg.get("circuit_breakers", {}).get("volatility_spike_ratio", 1.5)
         ):
             reasons.append("Market volatility circuit breaker active.")
+        if bool(self.risk_cfg.get("circuit_breakers", {}).get("drift_block_enabled", False)) and bool(
+            account_state.get("market_drift_detected", False)
+        ):
+            reasons.append("Market drift circuit breaker active.")
 
         correlation_limit = float(self.risk_cfg.get("max_correlation", 0.70))
         if opportunity.correlation_with_btc > correlation_limit:
             reasons.append("Correlation threshold exceeded.")
 
         size_usdt = self.position_size(account_state=account_state, atr_ratio=opportunity.atr_ratio)
+
+        # Strict pre-trade risk budget enforcement (daily + weekly), including projected risk if order is opened.
+        snapshot = self.risk_budget_snapshot(account_state=account_state, size_usdt=size_usdt)
+        daily_used_pct = snapshot["daily_used_pct"]
+        weekly_used_pct = snapshot["weekly_used_pct"]
+        daily_budget_pct = snapshot["daily_budget_pct"]
+        weekly_budget_pct = snapshot["weekly_budget_pct"]
+
+        if daily_used_pct >= daily_budget_pct:
+            reasons.append("Daily risk budget exhausted.")
+        elif snapshot["daily_used_with_trade_pct"] > daily_budget_pct:
+            reasons.append("Daily risk budget would be exceeded by this trade.")
+
+        if weekly_used_pct >= weekly_budget_pct:
+            reasons.append("Weekly risk budget exhausted.")
+        elif snapshot["weekly_used_with_trade_pct"] > weekly_budget_pct:
+            reasons.append("Weekly risk budget would be exceeded by this trade.")
 
         active_capital = float(account_state.get("active_capital", 0.0))
         current_exposure = float(sum(p.get("size_usdt", 0.0) for p in open_positions))
