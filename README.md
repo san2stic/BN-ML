@@ -352,66 +352,80 @@ Si tu pushes un setup live, ne commite jamais `.env` ou des secrets.
 - Template PR: `.github/PULL_REQUEST_TEMPLATE.md`
 - Templates issues: `.github/ISSUE_TEMPLATE/`
 
-## 11) Sync modèles GitHub (publisher/client)
+## 11) Sync modèles (GitHub ou RunPod)
+
+Le script unique est `python3 -m scripts.model_sync`.
+
+### Mode A: GitHub publisher/client
 
 Objectif:
-- serveur publisher: entraîne chaque jour à `00:00`, puis push les modèles vers un repo GitHub dédié
-- client(s): pull chaque jour à `06:00`, puis resynchronisent leur dossier local `models/`
+- `publisher`: entraîne puis pousse les modèles vers un repo Git dédié
+- `client`: pull le repo et remplace le dossier local `models/`
+
+One-shot:
+
+```bash
+python3 -m scripts.model_sync publish --config configs/bot.yaml --repo-dir /ABS/PATH/model-registry-repo
+python3 -m scripts.model_sync pull --config configs/bot.yaml --repo-dir /ABS/PATH/model-registry-repo --models-dir models
+```
+
+Daemon quotidien:
+
+```bash
+python3 -m scripts.model_sync daemon --role publisher --repo-dir /ABS/PATH/model-registry-repo
+python3 -m scripts.model_sync daemon --role client --repo-dir /ABS/PATH/model-registry-repo
+```
+
+### Mode B: RunPod endpoint (trigger + pull archive)
+
+Objectif:
+- appeler un endpoint RunPod qui lance l'entraînement
+- attendre la fin du job
+- télécharger l'archive des modèles et remplacer `models/`
 
 Configuration (`configs/bot.yaml`):
 
 ```yaml
 model_sync:
-  enabled: false
-  repo_dir: ""
-  remote: origin
-  branch: main
-  repo_models_subdir: models
-  publisher:
-    schedule: "00:00"
-    train_before_push: true
-  client:
-    schedule: "06:00"
+  runpod_client:
+    schedule: "03:00"
+  runpod:
+    enabled: true
+    trigger_url: "https://api.runpod.ai/v2/<ENDPOINT_ID>/run"
+    status_url_template: "https://api.runpod.ai/v2/<ENDPOINT_ID>/status/{job_id}"
+    api_key_env: RUNPOD_API_KEY
+    trigger_method: POST
+    trigger_payload: {}
+    headers: {}
+    request_timeout_sec: 20
+    poll_interval_sec: 10
+    job_timeout_sec: 3600
+    download_timeout_sec: 300
+    extract_subdir: models
 ```
 
-Commande publisher (one-shot):
+One-shot:
 
 ```bash
-python3 -m scripts.model_sync publish \
-  --config configs/bot.yaml \
-  --repo-dir /ABS/PATH/model-registry-repo
+python3 -m scripts.model_sync runpod-pull --config configs/bot.yaml --models-dir models
 ```
 
-Commande client (one-shot):
+Daemon quotidien:
 
 ```bash
-python3 -m scripts.model_sync pull \
-  --config configs/bot.yaml \
-  --repo-dir /ABS/PATH/model-registry-repo \
-  --models-dir models
+python3 -m scripts.model_sync daemon --role runpod_client --config configs/bot.yaml --models-dir models
 ```
 
-Mode daemon (scheduler intégré):
+## 12) Docker (RunPod quotidien)
+
+Le compose inclut un service dédié `model-sync-runpod` qui exécute le daemon quotidien (`--role runpod_client`).
 
 ```bash
-# serveur: train + push à 00:00 local
-python3 -m scripts.model_sync daemon --role publisher --repo-dir /ABS/PATH/model-registry-repo
+# stack paper avec sync RunPod
+docker compose --profile paper up -d bot-paper model-sync-runpod dashboard api prometheus grafana
 
-# client: pull + sync local à 06:00 local
-python3 -m scripts.model_sync daemon --role client --repo-dir /ABS/PATH/model-registry-repo
+# stack live avec sync RunPod
+docker compose --profile live up -d bot-live model-sync-runpod dashboard api prometheus grafana
 ```
 
-Exemple cron (recommandé en production):
-
-```cron
-# Publisher à 00:00 tous les jours
-0 0 * * * cd /ABS/PATH/BN-ML && /usr/bin/python3 -m scripts.model_sync publish --config configs/bot.yaml --repo-dir /ABS/PATH/model-registry-repo >> artifacts/logs/model_sync_publisher.log 2>&1
-
-# Client à 06:00 tous les jours
-0 6 * * * cd /ABS/PATH/BN-ML && /usr/bin/python3 -m scripts.model_sync pull --config configs/bot.yaml --repo-dir /ABS/PATH/model-registry-repo --models-dir models >> artifacts/logs/model_sync_client.log 2>&1
-```
-
-Pré-requis Git:
-- repo Git local cloné avec remote `origin` pointant vers GitHub
-- auth configurée (SSH key ou token)
-- worktree propre avant sync (sinon blocage par défaut)
+Dans `.env`, définir `RUNPOD_API_KEY=...`.

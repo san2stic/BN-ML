@@ -169,6 +169,21 @@ model_sync:
     train_before_push: true
   client:
     schedule: "06:00"
+  runpod_client:
+    schedule: "03:00"
+  runpod:
+    enabled: false
+    trigger_url: ""
+    status_url_template: ""
+    api_key_env: RUNPOD_API_KEY
+    trigger_method: POST
+    trigger_payload: {}
+    headers: {}
+    request_timeout_sec: 20
+    poll_interval_sec: 10
+    job_timeout_sec: 3600
+    download_timeout_sec: 300
+    extract_subdir: models
 
 risk:
   capital_total: auto

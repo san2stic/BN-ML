@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import io
+import json
+import os
 import shutil
 import subprocess
+import tempfile
+import time
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
+from urllib import error, request
 
 class ModelSyncError(RuntimeError):
     pass
@@ -18,6 +26,36 @@ class GitSyncSettings:
     remote: str = "origin"
     branch: str = "main"
     allow_dirty_worktree: bool = False
+
+
+@dataclass(frozen=True)
+class RunpodSyncSettings:
+    trigger_url: str
+    models_dir: Path
+    status_url_template: str | None = None
+    trigger_method: str = "POST"
+    trigger_payload: dict[str, Any] | None = None
+    headers: dict[str, str] | None = None
+    api_key: str | None = None
+    request_timeout_sec: float = 20.0
+    poll_interval_sec: float = 10.0
+    job_timeout_sec: float = 3600.0
+    download_timeout_sec: float = 300.0
+    extract_subdir: str | None = "models"
+    job_id_paths: tuple[str, ...] = ("id", "job_id", "requestId")
+    status_paths: tuple[str, ...] = ("status", "state")
+    download_url_paths: tuple[str, ...] = (
+        "output.models_archive_url",
+        "output.model_archive_url",
+        "output.download_url",
+        "models_archive_url",
+        "model_archive_url",
+        "download_url",
+    )
+
+
+RUNPOD_SUCCESS_STATES = {"COMPLETED", "SUCCEEDED", "SUCCESS"}
+RUNPOD_FAILURE_STATES = {"FAILED", "ERROR", "CANCELED", "CANCELLED", "TIMED_OUT", "TIMEOUT"}
 
 
 def parse_daily_time(value: str) -> tuple[int, int]:
@@ -39,6 +77,89 @@ def next_daily_run(now_local: datetime, hour: int, minute: int) -> datetime:
     if candidate <= now_local:
         candidate = candidate + timedelta(days=1)
     return candidate
+
+
+def pull_models_from_runpod(settings: RunpodSyncSettings) -> dict:
+    trigger_url = str(settings.trigger_url or "").strip()
+    if not trigger_url:
+        raise ModelSyncError("Missing RunPod trigger URL.")
+
+    trigger_method = str(settings.trigger_method or "POST").upper()
+    payload = dict(settings.trigger_payload or {})
+    response = _http_json_request(
+        method=trigger_method,
+        url=trigger_url,
+        headers=_build_api_headers(settings),
+        payload=payload if trigger_method in {"POST", "PUT", "PATCH"} else None,
+        timeout_sec=max(1.0, float(settings.request_timeout_sec)),
+    )
+
+    job_id = _as_str(_extract_first(response, settings.job_id_paths))
+    status_value = _as_str(_extract_first(response, settings.status_paths))
+    status_upper = status_value.upper() if status_value else ""
+    download_url = _as_str(_extract_first(response, settings.download_url_paths))
+    final_payload = response
+    final_status = status_upper
+
+    if not download_url:
+        status_url_template = str(settings.status_url_template or "").strip()
+        if not status_url_template:
+            raise ModelSyncError(
+                "RunPod response did not provide a model archive URL. "
+                "Set model_sync.runpod.status_url_template or return download URL directly in endpoint output."
+            )
+        if not job_id:
+            raise ModelSyncError("RunPod response missing job id.")
+
+        deadline = time.monotonic() + max(5.0, float(settings.job_timeout_sec))
+        poll_interval = max(1.0, float(settings.poll_interval_sec))
+        while True:
+            if time.monotonic() >= deadline:
+                raise ModelSyncError(f"RunPod job {job_id} timed out after {settings.job_timeout_sec:.0f}s.")
+
+            status_url = status_url_template.format(job_id=job_id, id=job_id)
+            polled = _http_json_request(
+                method="GET",
+                url=status_url,
+                headers=_build_api_headers(settings),
+                payload=None,
+                timeout_sec=max(1.0, float(settings.request_timeout_sec)),
+            )
+            final_payload = polled
+            final_status = _as_str(_extract_first(polled, settings.status_paths)).upper()
+            if final_status in RUNPOD_FAILURE_STATES:
+                detail = _as_str(_extract_first(polled, ("error", "output.error", "message"))) or "unknown error"
+                raise ModelSyncError(f"RunPod job {job_id} failed ({final_status}): {detail}")
+
+            download_url = _as_str(_extract_first(polled, settings.download_url_paths))
+            if final_status in RUNPOD_SUCCESS_STATES and download_url:
+                break
+            if download_url and not final_status:
+                break
+
+            time.sleep(poll_interval)
+
+    archive_bytes = _http_bytes_request(
+        method="GET",
+        url=download_url,
+        headers=_build_download_headers(settings),
+        timeout_sec=max(1.0, float(settings.download_timeout_sec)),
+    )
+    file_count = _replace_models_from_zip(
+        archive_bytes=archive_bytes,
+        models_dir=settings.models_dir,
+        extract_subdir=settings.extract_subdir,
+    )
+
+    return {
+        "pulled": True,
+        "provider": "runpod",
+        "job_id": job_id,
+        "status": final_status or _as_str(_extract_first(final_payload, settings.status_paths)),
+        "download_url": download_url,
+        "model_files": file_count,
+        "models_dir": str(settings.models_dir),
+    }
 
 
 def publish_models_to_git(settings: GitSyncSettings, commit_message: str | None = None) -> dict:
@@ -94,6 +215,169 @@ def pull_models_from_git(settings: GitSyncSettings) -> dict:
         "branch": settings.branch,
         "remote": settings.remote,
     }
+
+
+def _build_api_headers(settings: RunpodSyncSettings) -> dict[str, str]:
+    headers = {str(k): str(v) for k, v in (settings.headers or {}).items()}
+    headers.setdefault("Accept", "application/json")
+    if settings.api_key:
+        headers.setdefault("Authorization", f"Bearer {settings.api_key}")
+    return headers
+
+
+def _build_download_headers(settings: RunpodSyncSettings) -> dict[str, str]:
+    headers = _build_api_headers(settings)
+    headers.pop("Content-Type", None)
+    headers["Accept"] = "application/octet-stream"
+    return headers
+
+
+def _http_json_request(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any] | None,
+    timeout_sec: float,
+) -> dict[str, Any]:
+    body: bytes | None = None
+    req_headers = dict(headers)
+    if payload is not None:
+        req_headers.setdefault("Content-Type", "application/json")
+        body = json.dumps(payload).encode("utf-8")
+
+    req = request.Request(url=url, data=body, headers=req_headers, method=method.upper())
+    try:
+        with request.urlopen(req, timeout=timeout_sec) as resp:
+            raw = resp.read()
+    except error.HTTPError as exc:
+        detail = _read_http_error_body(exc)
+        raise ModelSyncError(f"HTTP {exc.code} on {method.upper()} {url}: {detail}") from exc
+    except error.URLError as exc:
+        raise ModelSyncError(f"Network error on {method.upper()} {url}: {exc.reason}") from exc
+
+    try:
+        decoded = raw.decode("utf-8")
+        parsed = json.loads(decoded)
+    except Exception as exc:
+        raise ModelSyncError(f"Invalid JSON response from {url}") from exc
+    if not isinstance(parsed, dict):
+        raise ModelSyncError(f"Expected JSON object from {url}")
+    return parsed
+
+
+def _http_bytes_request(*, method: str, url: str, headers: dict[str, str], timeout_sec: float) -> bytes:
+    req = request.Request(url=url, data=None, headers=headers, method=method.upper())
+    try:
+        with request.urlopen(req, timeout=timeout_sec) as resp:
+            data = resp.read()
+    except error.HTTPError as exc:
+        detail = _read_http_error_body(exc)
+        raise ModelSyncError(f"HTTP {exc.code} on {method.upper()} {url}: {detail}") from exc
+    except error.URLError as exc:
+        raise ModelSyncError(f"Network error on {method.upper()} {url}: {exc.reason}") from exc
+
+    if not data:
+        raise ModelSyncError(f"Empty archive payload from {url}")
+    return data
+
+
+def _read_http_error_body(exc: error.HTTPError) -> str:
+    try:
+        payload = exc.read()
+        if payload:
+            return payload.decode("utf-8", errors="replace").strip()[:500]
+    except Exception:
+        pass
+    return str(exc.reason or "request failed")
+
+
+def _extract_first(payload: Any, dotted_paths: tuple[str, ...]) -> Any:
+    for dotted in dotted_paths:
+        value = _extract_path(payload, dotted)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
+def _extract_path(payload: Any, dotted_path: str) -> Any:
+    current = payload
+    for part in dotted_path.split("."):
+        key = part.strip()
+        if not key:
+            return None
+        if isinstance(current, dict):
+            if key not in current:
+                return None
+            current = current[key]
+            continue
+        if isinstance(current, list) and key.isdigit():
+            idx = int(key)
+            if idx < 0 or idx >= len(current):
+                return None
+            current = current[idx]
+            continue
+        return None
+    return current
+
+
+def _replace_models_from_zip(*, archive_bytes: bytes, models_dir: Path, extract_subdir: str | None) -> int:
+    with tempfile.TemporaryDirectory(prefix="bnml_runpod_") as tmp:
+        root = Path(tmp)
+        extracted = root / "extracted"
+        extracted.mkdir(parents=True, exist_ok=True)
+        _safe_extract_zip(archive_bytes=archive_bytes, destination=extracted)
+        source = _resolve_models_root(extracted=extracted, extract_subdir=extract_subdir)
+        if not source.exists():
+            raise ModelSyncError(f"Archive models source not found: {source}")
+        if _count_files(source) <= 0:
+            raise ModelSyncError("Archive did not contain model files.")
+        _mirror_tree(src=source, dst=models_dir)
+    return _count_files(models_dir)
+
+
+def _safe_extract_zip(*, archive_bytes: bytes, destination: Path) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive_bytes), mode="r") as archive:
+            base = destination.resolve()
+            for member in archive.infolist():
+                normalized = member.filename.replace("\\", "/")
+                if normalized.startswith("/") or normalized.startswith("../") or "/../" in normalized:
+                    raise ModelSyncError(f"Unsafe path in archive: {member.filename!r}")
+                target = (destination / normalized).resolve()
+                if target != base and os.path.commonpath([str(base), str(target)]) != str(base):
+                    raise ModelSyncError(f"Unsafe path in archive: {member.filename!r}")
+            archive.extractall(destination)
+    except zipfile.BadZipFile as exc:
+        raise ModelSyncError("Downloaded file is not a valid ZIP archive.") from exc
+
+
+def _resolve_models_root(*, extracted: Path, extract_subdir: str | None) -> Path:
+    preferred = str(extract_subdir or "").strip().strip("/\\")
+    if preferred:
+        direct = extracted / preferred
+        if direct.exists() and direct.is_dir():
+            return direct
+
+    top_level = [item for item in extracted.iterdir() if item.name != "__MACOSX"]
+    if len(top_level) == 1 and top_level[0].is_dir():
+        single = top_level[0]
+        if preferred:
+            nested = single / preferred
+            if nested.exists() and nested.is_dir():
+                return nested
+        return single
+
+    return extracted
+
+
+def _as_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def _ensure_repo(repo_dir: Path) -> None:

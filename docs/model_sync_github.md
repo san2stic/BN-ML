@@ -1,21 +1,14 @@
-# GitHub Model Sync
+# Model Sync (GitHub + RunPod)
 
-Ce document décrit le flux de distribution des modèles BN-ML via un repository GitHub dédié.
-
-## 1) Architecture cible
-
-- `publisher` (serveur d'entraînement):
-  - entraîne les modèles quotidiennement
-  - pousse le dossier modèles vers un repo GitHub
-- `client` (serveur bot consumer):
-  - récupère les derniers modèles depuis GitHub
-  - remplace son dossier local `models/`
+Ce document couvre les deux modes de synchronisation des modèles BN-ML:
+- distribution via repo GitHub (publisher/client)
+- distribution via endpoint RunPod (trigger + polling + download archive)
 
 Le script utilisé est `python3 -m scripts.model_sync`.
 
-## 2) Paramètres principaux
+## 1) Mode GitHub
 
-Dans `configs/bot.yaml`:
+Configuration:
 
 ```yaml
 model_sync:
@@ -30,56 +23,77 @@ model_sync:
     schedule: "06:00"
 ```
 
-## 3) Publisher
-
-One-shot:
+Publisher one-shot:
 
 ```bash
 python3 -m scripts.model_sync publish --config configs/bot.yaml
 ```
 
-Par défaut:
-- lance l'entraînement (`train_before_push: true`)
-- synchronise le dossier local `models/` vers `<repo_dir>/models`
-- commit/push uniquement s'il y a des changements
-
-Options utiles:
-- `--skip-training`
-- `--symbol BTC/USDC --symbol ETH/USDC`
-- `--train-missing-only` ou `--train-all`
-- `--commit-message "chore(models): daily refresh"`
-
-## 4) Client
-
-One-shot:
+Client one-shot:
 
 ```bash
 python3 -m scripts.model_sync pull --config configs/bot.yaml
 ```
 
-Comportement:
-- `git pull --ff-only` depuis la branche configurée
-- miroir de `<repo_dir>/models` vers le dossier local `models/`
-
-## 5) Scheduler quotidien
-
-Daemon intégré:
+Daemon quotidien:
 
 ```bash
 python3 -m scripts.model_sync daemon --role publisher --config configs/bot.yaml
 python3 -m scripts.model_sync daemon --role client --config configs/bot.yaml
 ```
 
-Ou cron:
+## 2) Mode RunPod
 
-```cron
-0 0 * * * cd /ABS/PATH/BN-ML && /usr/bin/python3 -m scripts.model_sync publish --config configs/bot.yaml >> artifacts/logs/model_sync_publisher.log 2>&1
-0 6 * * * cd /ABS/PATH/BN-ML && /usr/bin/python3 -m scripts.model_sync pull --config configs/bot.yaml >> artifacts/logs/model_sync_client.log 2>&1
+Configuration:
+
+```yaml
+model_sync:
+  runpod_client:
+    schedule: "03:00"
+  runpod:
+    enabled: true
+    trigger_url: "https://api.runpod.ai/v2/<ENDPOINT_ID>/run"
+    status_url_template: "https://api.runpod.ai/v2/<ENDPOINT_ID>/status/{job_id}"
+    api_key_env: "RUNPOD_API_KEY"
+    trigger_method: "POST"
+    trigger_payload: {}
+    headers: {}
+    request_timeout_sec: 20
+    poll_interval_sec: 10
+    job_timeout_sec: 3600
+    download_timeout_sec: 300
+    extract_subdir: "models"
 ```
 
-## 6) Sécurité opérationnelle
+`.env`:
 
-- utiliser un repo GitHub dédié aux modèles
-- configurer l'auth Git (SSH ou token) côté machine
-- ne jamais stocker de secrets dans le repo modèles
-- garder le worktree propre (comportement bloquant par défaut)
+```bash
+RUNPOD_API_KEY=rp_...
+```
+
+One-shot (trigger + attente + pull):
+
+```bash
+python3 -m scripts.model_sync runpod-pull --config configs/bot.yaml --models-dir models
+```
+
+Daemon quotidien:
+
+```bash
+python3 -m scripts.model_sync daemon --role runpod_client --config configs/bot.yaml --models-dir models
+```
+
+## 3) Docker
+
+`docker-compose.yml` inclut le service `model-sync-runpod`:
+
+```bash
+docker compose --profile paper up -d bot-paper model-sync-runpod dashboard api prometheus grafana
+docker compose --profile live up -d bot-live model-sync-runpod dashboard api prometheus grafana
+```
+
+## 4) Sécurité opérationnelle
+
+- ne jamais commiter de clé API RunPod
+- conserver `extract_subdir: models` pour limiter l'extraction au sous-dossier attendu
+- en mode Git, garder un worktree propre (blocage par défaut)

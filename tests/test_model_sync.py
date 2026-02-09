@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import io
 import subprocess
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import bn_ml.model_sync as model_sync_module
 from bn_ml.model_sync import (
     GitSyncSettings,
     ModelSyncError,
+    RunpodSyncSettings,
     next_daily_run,
     parse_daily_time,
+    pull_models_from_runpod,
     publish_models_to_git,
     pull_models_from_git,
 )
@@ -51,6 +56,14 @@ def _git_init_remote_and_clones(tmp_path: Path) -> tuple[Path, Path]:
     _git(client, "config", "user.email", "client@example.com")
     _git(client, "config", "user.name", "BN-ML Client")
     return publisher, client
+
+
+def _zip_models_archive(prefix: str = "models") -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr(f"{prefix}/BTC_USDC/rf.joblib", "rf-v1")
+        bundle.writestr(f"{prefix}/BTC_USDC/metadata.json", '{"symbol":"BTC/USDC"}')
+    return payload.getvalue()
 
 
 def test_parse_daily_time_and_next_run() -> None:
@@ -135,3 +148,130 @@ def test_next_daily_run_requires_timezone() -> None:
     now_naive = datetime.now() + timedelta(seconds=1)
     with pytest.raises(ValueError):
         next_daily_run(now_naive, hour=0, minute=0)
+
+
+def test_pull_models_from_runpod_direct_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    models_dir = tmp_path / "models"
+    settings = RunpodSyncSettings(
+        trigger_url="https://runpod.example/api/run",
+        models_dir=models_dir,
+        trigger_payload={"symbols": ["BTC/USDC"]},
+    )
+
+    def fake_json_request(*, method, url, headers, payload, timeout_sec):  # type: ignore[no-untyped-def]
+        assert method == "POST"
+        assert url == "https://runpod.example/api/run"
+        assert payload == {"symbols": ["BTC/USDC"]}
+        assert float(timeout_sec) > 0
+        assert "Accept" in headers
+        return {
+            "status": "COMPLETED",
+            "output": {"models_archive_url": "https://cdn.example/models.zip"},
+        }
+
+    def fake_bytes_request(*, method, url, headers, timeout_sec):  # type: ignore[no-untyped-def]
+        assert method == "GET"
+        assert url == "https://cdn.example/models.zip"
+        assert float(timeout_sec) > 0
+        assert "Accept" in headers
+        return _zip_models_archive(prefix="models")
+
+    monkeypatch.setattr(model_sync_module, "_http_json_request", fake_json_request)
+    monkeypatch.setattr(model_sync_module, "_http_bytes_request", fake_bytes_request)
+
+    result = pull_models_from_runpod(settings=settings)
+    assert result["pulled"] is True
+    assert result["provider"] == "runpod"
+    assert int(result["model_files"]) >= 2
+    assert (models_dir / "BTC_USDC" / "rf.joblib").read_text(encoding="utf-8") == "rf-v1"
+
+
+def test_pull_models_from_runpod_polling_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    models_dir = tmp_path / "models"
+    settings = RunpodSyncSettings(
+        trigger_url="https://runpod.example/api/run",
+        status_url_template="https://runpod.example/api/status/{job_id}",
+        models_dir=models_dir,
+        poll_interval_sec=1.0,
+        job_timeout_sec=30.0,
+    )
+
+    calls: list[tuple[str, str]] = []
+    responses = iter(
+        [
+            {"id": "job-123", "status": "IN_PROGRESS"},
+            {"id": "job-123", "status": "IN_PROGRESS"},
+            {"id": "job-123", "status": "COMPLETED", "output": {"models_archive_url": "https://cdn.example/archive.zip"}},
+        ]
+    )
+
+    def fake_json_request(*, method, url, headers, payload, timeout_sec):  # type: ignore[no-untyped-def]
+        calls.append((method, url))
+        assert float(timeout_sec) > 0
+        return next(responses)
+
+    def fake_bytes_request(*, method, url, headers, timeout_sec):  # type: ignore[no-untyped-def]
+        assert method == "GET"
+        assert url == "https://cdn.example/archive.zip"
+        return _zip_models_archive(prefix="models")
+
+    monkeypatch.setattr(model_sync_module, "_http_json_request", fake_json_request)
+    monkeypatch.setattr(model_sync_module, "_http_bytes_request", fake_bytes_request)
+    monkeypatch.setattr(model_sync_module.time, "sleep", lambda _: None)
+
+    result = pull_models_from_runpod(settings=settings)
+    assert result["pulled"] is True
+    assert result["job_id"] == "job-123"
+    assert result["status"] == "COMPLETED"
+    assert calls[0] == ("POST", "https://runpod.example/api/run")
+    assert calls[1] == ("GET", "https://runpod.example/api/status/job-123")
+
+
+def test_pull_models_from_runpod_failed_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = RunpodSyncSettings(
+        trigger_url="https://runpod.example/api/run",
+        status_url_template="https://runpod.example/api/status/{job_id}",
+        models_dir=tmp_path / "models",
+    )
+
+    responses = iter(
+        [
+            {"id": "job-999", "status": "IN_PROGRESS"},
+            {"id": "job-999", "status": "FAILED", "error": "gpu oom"},
+        ]
+    )
+
+    def fake_json_request(*, method, url, headers, payload, timeout_sec):  # type: ignore[no-untyped-def]
+        return next(responses)
+
+    def fake_bytes_request(*, method, url, headers, timeout_sec):  # type: ignore[no-untyped-def]
+        raise AssertionError("download must not be called on failed job")
+
+    monkeypatch.setattr(model_sync_module, "_http_json_request", fake_json_request)
+    monkeypatch.setattr(model_sync_module, "_http_bytes_request", fake_bytes_request)
+    monkeypatch.setattr(model_sync_module.time, "sleep", lambda _: None)
+
+    with pytest.raises(ModelSyncError, match="failed"):
+        pull_models_from_runpod(settings=settings)
+
+
+def test_pull_models_from_runpod_rejects_unsafe_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = RunpodSyncSettings(
+        trigger_url="https://runpod.example/api/run",
+        models_dir=tmp_path / "models",
+    )
+
+    def fake_json_request(*, method, url, headers, payload, timeout_sec):  # type: ignore[no-untyped-def]
+        return {"status": "COMPLETED", "output": {"models_archive_url": "https://cdn.example/bad.zip"}}
+
+    def fake_bytes_request(*, method, url, headers, timeout_sec):  # type: ignore[no-untyped-def]
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            bundle.writestr("../escape.txt", "bad")
+        return payload.getvalue()
+
+    monkeypatch.setattr(model_sync_module, "_http_json_request", fake_json_request)
+    monkeypatch.setattr(model_sync_module, "_http_bytes_request", fake_bytes_request)
+
+    with pytest.raises(ModelSyncError, match="Unsafe path"):
+        pull_models_from_runpod(settings=settings)
