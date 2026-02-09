@@ -172,12 +172,14 @@ model_sync:
   runpod_client:
     schedule: "03:00"
   runpod:
-    enabled: false
-    trigger_url: ""
-    status_url_template: ""
+    enabled: true
+    trigger_url: "https://api.runpod.ai/v2/dzopl5dit7s70g/run"
+    status_url_template: "https://api.runpod.ai/v2/dzopl5dit7s70g/status/{job_id}"
     api_key_env: RUNPOD_API_KEY
     trigger_method: POST
-    trigger_payload: {}
+    trigger_payload:
+      input:
+        prompt: "Train BN-ML models and return a downloadable models archive"
     headers: {}
     request_timeout_sec: 20
     poll_interval_sec: 10
