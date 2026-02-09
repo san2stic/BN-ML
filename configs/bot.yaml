@@ -49,8 +49,8 @@ model:
   feature_limit: 50
   sequence_length: 64
   random_state: 42
-  train_ohlcv_limit: 1800
-  backtest_ohlcv_limit: 2000
+  train_ohlcv_limit: 5000
+  backtest_ohlcv_limit: 3000
   multi_timeframe:
     enabled: true
     base_timeframe: 15m
@@ -68,9 +68,15 @@ model:
       - roc_4h
       - dist_high_24h
       - dist_low_24h
-    min_candles_per_timeframe: 120
-    max_candles_per_timeframe: 360
-    extra_candles_buffer: 48
+      - adx_14
+      - stoch_k
+      - cci_20
+      - keltner_pct
+      - vol_regime_ratio
+      - supertrend_direction
+    min_candles_per_timeframe: 200
+    max_candles_per_timeframe: 600
+    extra_candles_buffer: 96
   acceleration:
     mode: auto
     cpu_n_jobs: -1
@@ -79,10 +85,12 @@ model:
     cost_multiplier: 1.0
   hpo:
     enabled: true
-    max_samples: 900
-    max_splits: 3
-    rf_trials: 4
-    xgb_trials: 3
+    backend: optuna
+    max_samples: 2000
+    max_splits: 4
+    rf_trials: 20
+    xgb_trials: 15
+    lgb_trials: 15
     objective_weight_sharpe: 0.35
     objective_weight_sortino: 0.30
     objective_weight_accuracy: 0.10
@@ -99,6 +107,7 @@ model:
     round_trip_cost_multiplier: 2.0
     cost_safety_multiplier: 1.35
   ensemble:
+    calibration: isotonic
     min_buy_proba: 0.42
     min_sell_proba: 0.42
     min_margin: 0.07
@@ -116,6 +125,17 @@ model:
     reg_alpha: 0.01
     reg_lambda: 1.0
     early_stopping_rounds: 40
+  lgb:
+    enabled: true
+    n_estimators: 400
+    max_depth: -1
+    num_leaves: 31
+    learning_rate: 0.03
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.01
+    reg_lambda: 1.0
+    min_child_samples: 30
   lstm:
     enabled: false
     epochs: 30

@@ -25,7 +25,7 @@ class MLEnsemblePredictor:
 
     def _load_model_bundle(self, directory: Path) -> dict:
         models = {}
-        for name in ["rf", "xgb"]:
+        for name in ["rf", "xgb", "lgb"]:
             path = directory / f"{name}.joblib"
             if path.exists():
                 try:
