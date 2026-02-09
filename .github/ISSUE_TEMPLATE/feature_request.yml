@@ -1,0 +1,42 @@
+name: "Feature request"
+description: "Proposer une amélioration"
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: input
+    id: summary
+    attributes:
+      label: Résumé
+      description: Proposition en une phrase
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problème adressé
+      description: Quel besoin concret cette feature couvre ?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposition
+      description: Approche technique envisagée
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: Impact risque/trading
+      description: Expliquer les implications sur la robustesse et la préservation du capital
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: "Je confirme qu'aucune clé/API secret n'est inclus"
+          required: true
+        - label: "J'ai considéré les contraintes du RiskManager"
+          required: true

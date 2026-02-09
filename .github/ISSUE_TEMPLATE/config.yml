@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions d'usage
+    url: https://github.com/san2stic/BN-ML/discussions
+    about: Utilisez Discussions pour les questions générales et retours d'expérience.

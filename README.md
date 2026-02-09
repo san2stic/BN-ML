@@ -1,5 +1,9 @@
 # BN-ML - Binance Spot ML Trading Bot
 
+[![CI](https://github.com/san2stic/BN-ML/actions/workflows/ci.yml/badge.svg)](https://github.com/san2stic/BN-ML/actions/workflows/ci.yml)
+[![Security](https://github.com/san2stic/BN-ML/actions/workflows/security.yml/badge.svg)](https://github.com/san2stic/BN-ML/actions/workflows/security.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+
 Bot de trading Binance Spot orienté production avec:
 - entraînement ML par symbole
 - hyperparameter optimization walk-forward (objectif Sharpe/Sortino/Accuracy)
@@ -272,6 +276,13 @@ python3 -m scripts.run_trainer --paper --symbol BTC/USDC
 ```
 
 Si tu pushes un setup live, ne commite jamais `.env` ou des secrets.
+
+## Contribution et sécurité
+
+- Guide contribution: `CONTRIBUTING.md`
+- Politique sécurité: `SECURITY.md`
+- Template PR: `.github/PULL_REQUEST_TEMPLATE.md`
+- Templates issues: `.github/ISSUE_TEMPLATE/`
 
 ## 10) Sync modèles GitHub (publisher/client)
 

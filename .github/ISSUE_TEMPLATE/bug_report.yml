@@ -1,0 +1,57 @@
+name: "Bug report"
+description: "Signaler un bug reproductible"
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de fournir un cas reproductible précis.
+  - type: input
+    id: summary
+    attributes:
+      label: Résumé
+      description: Description courte du problème
+      placeholder: "Le bot place un ordre malgré un breaker actif"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Étapes pour reproduire
+      description: Liste claire des étapes
+      placeholder: |
+        1. Lancer ...
+        2. Configurer ...
+        3. Observer ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportement attendu
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Comportement observé
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / extraits utiles
+      description: Sans secrets/API keys
+      render: shell
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact risque
+      options:
+        - "Critique (risque capital)"
+        - "Élevé"
+        - "Moyen"
+        - "Faible"
+    validations:
+      required: true
