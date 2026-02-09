@@ -46,7 +46,7 @@ services:
   dashboard:
     <<: *bnml-common
     profiles: ["paper", "live"]
-    command: ["streamlit", "run", "monitoring/dashboard.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    command: ["python", "-m", "streamlit", "run", "monitoring/dashboard.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
     ports:
       - "8501:8501"
 

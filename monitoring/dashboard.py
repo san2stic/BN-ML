@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,11 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    # Keep imports stable when Streamlit is launched from non-root working dirs.
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from bn_ml.config import load_config
 from data_manager.fetch_data import BinanceDataManager
