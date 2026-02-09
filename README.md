@@ -20,9 +20,16 @@ Bot de trading Binance Spot orienté production avec:
 Installation:
 
 ```bash
+# Option 1 (auto-install depuis GitHub)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install "git+https://github.com/san2stic/BN-ML.git"
+
+# Option 2 (dev local depuis le repo cloné)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e .
 cp .env.example .env
 ```
 
@@ -92,46 +99,49 @@ Analyse multi-timeframe (MTF):
 
 ## 3) Commandes principales
 
+Si tu as installé le package via `pip install git+...`, utilise les commandes `bnml-*`.
+Si tu exécutes depuis le repo cloné, les commandes `python3 -m scripts.*` restent disponibles.
+
 Entraîner les modèles par symbole:
 
 ```bash
-python3 -m scripts.run_trainer
+bnml-trainer
 ```
 
 Entraînement incrémental (manquants/anciens uniquement):
 
 ```bash
-python3 -m scripts.run_trainer --train-missing-only
+bnml-trainer --train-missing-only
 ```
 
 Forcer entraînement complet:
 
 ```bash
-python3 -m scripts.run_trainer --train-all
+bnml-trainer --train-all
 ```
 
 Entraîner seulement certains symboles:
 
 ```bash
-python3 -m scripts.run_trainer --symbol BTC/USDC --symbol ETH/USDC
+bnml-trainer --symbol BTC/USDC --symbol ETH/USDC
 ```
 
 Lancer un cycle unique bot (paper):
 
 ```bash
-python3 -m scripts.run_bot --once --paper
+bnml-bot --once --paper
 ```
 
 Campagne DoD paper 30 jours (checks quotidiens + rapport final):
 
 ```bash
-python3 -m scripts.run_dod_30d --days 30 --disable-retrain
+bnml-dod-30d --days 30 --disable-retrain
 ```
 
 Lancer en live continu:
 
 ```bash
-python3 -m scripts.run_bot --live
+bnml-bot --live
 ```
 
 Le dashboard est auto-lancé en mode continu si `monitoring.dashboard.auto_launch_with_bot: true`.
@@ -139,7 +149,7 @@ Le dashboard est auto-lancé en mode continu si `monitoring.dashboard.auto_launc
 Lancer sans dashboard:
 
 ```bash
-python3 -m scripts.run_bot --live --no-dashboard
+bnml-bot --live --no-dashboard
 ```
 
 Lancer dashboard seul:
@@ -151,19 +161,19 @@ streamlit run monitoring/dashboard.py
 Backtest baseline:
 
 ```bash
-python3 -m scripts.run_backtest --paper
+bnml-backtest --paper
 ```
 
 Kill switch (fermeture d'urgence):
 
 ```bash
-python3 -m scripts.kill_switch
+bnml-kill-switch
 ```
 
 Check quotidien DoD:
 
 ```bash
-python3 -m scripts.check_dod_daily --fail-on-violation
+bnml-dod-check --fail-on-violation
 ```
 
 Rapport synthese DoD:
