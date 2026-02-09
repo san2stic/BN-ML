@@ -93,6 +93,9 @@ class EnsembleTrainer:
     # -----------------------------------------------------------------------
 
     def train(self, df: pd.DataFrame, features: list[str], target_col: str = "label") -> TrainingResult:
+        import warnings
+        warnings.filterwarnings("ignore", message="X does not have valid feature names")
+
         if target_col not in df.columns:
             raise ValueError(f"Missing target column: {target_col}")
         if len(df) < 200:
@@ -395,6 +398,8 @@ class EnsembleTrainer:
                 if model is None:
                     continue
                 model.fit(x_train, y_train)
+                if hasattr(model, "feature_names_in_"):
+                    del model.feature_names_in_
             else:
                 model = self._build_model(model_kind=model_kind, params=params)
                 model.fit(x_train, y_train)
@@ -514,6 +519,9 @@ class EnsembleTrainer:
             if model is None:
                 return None, None, {}
             model.fit(x, y)
+            # Clear sklearn feature names to avoid warnings when predicting with numpy arrays
+            if hasattr(model, "feature_names_in_"):
+                del model.feature_names_in_
         else:
             return None, None, {}
 
@@ -578,13 +586,16 @@ class EnsembleTrainer:
 
     @staticmethod
     def _calibrate_models(models: dict, x_valid: np.ndarray, y_valid: np.ndarray, method: str = "isotonic") -> dict:
+        import warnings
         from sklearn.calibration import CalibratedClassifierCV
 
         calibrated = {}
         for name, model in models.items():
             try:
-                cal = CalibratedClassifierCV(model, method=method, cv="prefit")
-                cal.fit(x_valid, y_valid)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message="X does not have valid feature names")
+                    cal = CalibratedClassifierCV(model, method=method, cv="prefit")
+                    cal.fit(x_valid, y_valid)
                 calibrated[name] = cal
             except Exception:
                 calibrated[name] = model
