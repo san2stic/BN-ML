@@ -89,9 +89,9 @@ class MLEnsemblePredictor:
             model_input = self._model_input(name=name, frame=frame, features=active_features, row=row)
             if model_input is None:
                 continue
-            pred = int(self._predict_latest(model=model, model_input=model_input))
+            pred = int(self._predict_latest(name=name, model=model, model_input=model_input))
             model_votes[name] = pred
-            model_proba = self._model_proba(model=model, model_input=model_input, pred=pred)
+            model_proba = self._model_proba(name=name, model=model, model_input=model_input, pred=pred)
             aggregated_proba += ensemble_weights.get(name, 0.0) * model_proba
 
         if float(np.sum(aggregated_proba)) <= 1e-12:
@@ -175,7 +175,11 @@ class MLEnsemblePredictor:
         return row
 
     @staticmethod
-    def _predict_latest(model, model_input: np.ndarray) -> int:
+    def _predict_latest(name: str, model, model_input: np.ndarray) -> int:
+        if name == "xgb":
+            xgb_proba = MLEnsemblePredictor._xgb_cuda_predict_proba(model=model, model_input=model_input)
+            if xgb_proba is not None and xgb_proba.size > 0:
+                return int(np.argmax(xgb_proba))
         preds = np.asarray(model.predict(model_input))
         if preds.size == 0:
             return 1
@@ -200,9 +204,14 @@ class MLEnsemblePredictor:
         return {name: float(weight / total) for name, weight in weights.items()}
 
     @staticmethod
-    def _model_proba(model, model_input: np.ndarray, pred: int) -> np.ndarray:
+    def _model_proba(name: str, model, model_input: np.ndarray, pred: int) -> np.ndarray:
         one_hot = np.zeros(3, dtype=float)
         one_hot[int(np.clip(pred, 0, 2))] = 1.0
+
+        if name == "xgb":
+            xgb_proba = MLEnsemblePredictor._xgb_cuda_predict_proba(model=model, model_input=model_input)
+            if xgb_proba is not None and xgb_proba.size > 0:
+                return xgb_proba
 
         if not hasattr(model, "predict_proba"):
             return one_hot
@@ -215,8 +224,16 @@ class MLEnsemblePredictor:
         if raw.size == 0:
             return one_hot
 
+        aligned = MLEnsemblePredictor._align_class_proba(raw=raw, classes=getattr(model, "classes_", None))
+
+        total = float(np.sum(aligned))
+        if total <= 1e-12:
+            return one_hot
+        return aligned / total
+
+    @staticmethod
+    def _align_class_proba(raw: np.ndarray, classes) -> np.ndarray:
         aligned = np.zeros(3, dtype=float)
-        classes = getattr(model, "classes_", None)
         if classes is not None and len(classes) == len(raw):
             for idx, cls in enumerate(classes):
                 try:
@@ -225,14 +242,39 @@ class MLEnsemblePredictor:
                     continue
                 if 0 <= cls_idx <= 2:
                     aligned[cls_idx] = float(raw[idx])
-        else:
-            take = min(3, raw.size)
-            aligned[:take] = raw[:take]
+            return aligned
 
-        total = float(np.sum(aligned))
-        if total <= 1e-12:
-            return one_hot
-        return aligned / total
+        take = min(3, raw.size)
+        aligned[:take] = raw[:take]
+        return aligned
+
+    @staticmethod
+    def _xgb_cuda_predict_proba(model, model_input: np.ndarray) -> np.ndarray | None:
+        # Avoid XGBoost CPU<->GPU mismatch warnings by using explicit DMatrix path
+        # when the booster runs on CUDA and features come from numpy on CPU.
+        if not hasattr(model, "get_booster") or not hasattr(model, "get_xgb_params"):
+            return None
+        try:
+            params = model.get_xgb_params() or {}
+            device = str(params.get("device", "")).lower()
+        except Exception:
+            return None
+        if not device.startswith("cuda"):
+            return None
+        try:
+            from xgboost import DMatrix
+            booster = model.get_booster()
+            raw_all = np.asarray(booster.predict(DMatrix(model_input)), dtype=float)
+            raw = np.asarray(raw_all[-1], dtype=float) if raw_all.ndim == 2 else np.asarray(raw_all, dtype=float)
+            if raw.size == 0:
+                return None
+            aligned = MLEnsemblePredictor._align_class_proba(raw=raw, classes=getattr(model, "classes_", None))
+            total = float(np.sum(aligned))
+            if total <= 1e-12:
+                return None
+            return aligned / total
+        except Exception:
+            return None
 
     @staticmethod
     def _fallback_rule_based(symbol: str, frame: pd.DataFrame) -> Signal:

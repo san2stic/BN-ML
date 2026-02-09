@@ -217,7 +217,7 @@ class EnsembleTrainer:
     # -----------------------------------------------------------------------
 
     def _collect_train_metrics(self, metrics: dict, prefix: str, model, x, y, close):
-        preds = model.predict(x)
+        preds = self._predict_labels(model=model, x=x)
         net_returns, turnover = self._strategy_returns_after_costs(close, preds)
         sharpe, sortino = self._risk_metrics(net_returns)
         metrics[f"{prefix}_train_accuracy"] = float(accuracy_score(y, preds))
@@ -380,7 +380,7 @@ class EnsembleTrainer:
         scores: list[float] = []
         for train_idx, valid_idx in tscv.split(x):
             model.fit(x[train_idx], y[train_idx])
-            preds = model.predict(x[valid_idx])
+            preds = self._predict_labels(model=model, x=x[valid_idx])
             scores.append(accuracy_score(y[valid_idx], preds))
         return float(np.mean(scores)) if scores else 0.0
 
@@ -420,7 +420,7 @@ class EnsembleTrainer:
             else:
                 model = self._build_model(model_kind=model_kind, params=params)
                 model.fit(x_train, y_train)
-            preds = model.predict(x_valid)
+            preds = self._predict_labels(model=model, x=x_valid)
 
             accuracies.append(float(accuracy_score(y_valid, preds)))
             net_returns, turnover = self._strategy_returns_after_costs(close_valid, preds)
@@ -898,7 +898,7 @@ class EnsembleTrainer:
 
         metrics: dict[str, dict[str, float]] = {}
         for model_name, model in models.items():
-            preds = model.predict(x_valid)
+            preds = self._predict_labels(model=model, x=x_valid)
             net_returns, turnover = self._strategy_returns_after_costs(close_valid, preds)
             sharpe, sortino = self._risk_metrics(net_returns)
             acc = float(accuracy_score(y_valid, preds))
@@ -935,6 +935,38 @@ class EnsembleTrainer:
             - 0.10 * dd_s - 0.05 * turn_s
         )
         return float(max(score, 0.02))
+
+    @staticmethod
+    def _predict_labels(model, x: np.ndarray) -> np.ndarray:
+        raw_cuda = EnsembleTrainer._xgb_cuda_predict_raw(model=model, x=x)
+        if raw_cuda is not None and raw_cuda.size > 0:
+            if raw_cuda.ndim == 2:
+                idx = np.argmax(raw_cuda, axis=1)
+                classes = getattr(model, "classes_", None)
+                if classes is not None and len(classes) == raw_cuda.shape[1]:
+                    mapped = [classes[int(i)] for i in idx]
+                    return np.asarray(mapped)
+                return idx.astype(int)
+            return np.rint(raw_cuda).astype(int)
+        return np.asarray(model.predict(x))
+
+    @staticmethod
+    def _xgb_cuda_predict_raw(model, x: np.ndarray) -> np.ndarray | None:
+        if not hasattr(model, "get_booster") or not hasattr(model, "get_xgb_params"):
+            return None
+        try:
+            params = model.get_xgb_params() or {}
+            device = str(params.get("device", "")).lower()
+        except Exception:
+            return None
+        if not device.startswith("cuda"):
+            return None
+        try:
+            from xgboost import DMatrix
+            booster = model.get_booster()
+            return np.asarray(booster.predict(DMatrix(x)), dtype=float)
+        except Exception:
+            return None
 
     @staticmethod
     def _build_ensemble_weights(validation_metrics: dict[str, dict[str, float]]) -> dict[str, float]:
