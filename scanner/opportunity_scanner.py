@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from bn_ml.types import Opportunity
+from bn_ml.domain_types import Opportunity
 from data_manager.data_cleaner import DataCleaner
 from data_manager.features_engineer import FeatureEngineer
 from data_manager.fetch_data import BinanceDataManager

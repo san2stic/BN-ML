@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from bn_ml.types import Position
+from bn_ml.domain_types import Position
 
 
 @dataclass

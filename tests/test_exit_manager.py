@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from bn_ml.types import Position
+from bn_ml.domain_types import Position
 from trader.exit_manager import ExitManager
 
 

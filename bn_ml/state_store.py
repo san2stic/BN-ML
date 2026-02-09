@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from bn_ml.types import Position
+from bn_ml.domain_types import Position
 
 
 class StateStore:

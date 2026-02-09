@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bn_ml.types import Opportunity, Signal
+from bn_ml.domain_types import Opportunity, Signal
 from trader.risk_manager import RiskManager
 
 

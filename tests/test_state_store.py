@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bn_ml.state_store import StateStore
-from bn_ml.types import Position
+from bn_ml.domain_types import Position
 
 
 def test_store_roundtrip_positions(tmp_path) -> None:

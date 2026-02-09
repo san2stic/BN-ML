@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from bn_ml.symbols import symbol_to_model_key
-from bn_ml.types import Signal
+from bn_ml.domain_types import Signal
 
 
 class MLEnsemblePredictor:

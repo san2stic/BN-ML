@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from bn_ml.state_store import StateStore
-from bn_ml.types import Position
+from bn_ml.domain_types import Position
 
 
 class PositionManager:

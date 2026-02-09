@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bn_ml.exchange import build_binance_spot_exchange, call_with_retry
-from bn_ml.types import Position
+from bn_ml.domain_types import Position
 
 
 class OrderManager:

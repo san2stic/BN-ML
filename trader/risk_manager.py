@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from bn_ml.types import Opportunity
+from bn_ml.domain_types import Opportunity
 
 
 class RiskManager:
