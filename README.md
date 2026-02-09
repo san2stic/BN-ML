@@ -20,18 +20,25 @@ Bot de trading Binance Spot orienté production avec:
 Installation:
 
 ```bash
-# Option 1 (auto-install depuis GitHub)
+# Option 1 (PyPI, install par nom)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install bn-ml-trading-bot
+
+# Option 2 (auto-install depuis GitHub)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install "git+https://github.com/san2stic/BN-ML.git"
 
-# Option 2 (dev local depuis le repo cloné)
+# Option 3 (dev local depuis le repo cloné)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
 cp .env.example .env
 ```
+
+Publication PyPI automatique: voir `docs/pypi_trusted_publisher.md`.
 
 ## 2) Configuration
 
@@ -99,7 +106,7 @@ Analyse multi-timeframe (MTF):
 
 ## 3) Commandes principales
 
-Si tu as installé le package via `pip install git+...`, utilise les commandes `bnml-*`.
+Si tu as installé le package via `pip install bn-ml-trading-bot` (ou `pip install git+...`), utilise les commandes `bnml-*`.
 Si tu exécutes depuis le repo cloné, les commandes `python3 -m scripts.*` restent disponibles.
 
 Entraîner les modèles par symbole:
