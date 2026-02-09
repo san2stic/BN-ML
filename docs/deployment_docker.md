@@ -69,6 +69,8 @@ Le compose persiste automatiquement:
 - `models/` via volume `bnml_models`
 - données Prometheus/Grafana via `prometheus_data` et `grafana_data`
 
+Au démarrage, le service `volume-init` applique automatiquement `chown 10001:10001` sur `artifacts/` et `models/` pour éviter les erreurs `PermissionError` quand le bot tourne en `appuser`.
+
 ## Monitoring metrics (Prometheus)
 Métriques exposées via `api:/metrics`:
 - `bnml_scan_rows`, `bnml_scan_age_seconds`, `bnml_scan_signal_count`
@@ -91,6 +93,12 @@ docker compose down -v
 - API non accessible:
   - `docker compose logs -f api`
   - vérifier `docker compose ps`
+- `PermissionError: [Errno 13] ... artifacts/...`:
+  - relancer la stack (le service `volume-init` corrige les droits):
+    - `docker compose down`
+    - `docker compose --profile paper up -d bot-paper dashboard api prometheus grafana`
+  - si besoin, correction manuelle one-shot:
+    - `docker compose run --rm --user root bot-paper sh -lc "mkdir -p /app/artifacts /app/models && chown -R 10001:10001 /app/artifacts /app/models"`
 - Dashboard vide:
   - vérifier que `bot-paper`/`bot-live` écrit bien `artifacts/metrics/latest_scan.csv`
 - Grafana sans datasource:

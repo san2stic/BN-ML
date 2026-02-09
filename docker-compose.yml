@@ -10,9 +10,23 @@ x-bnml-common: &bnml-common
     - ./configs:/app/configs:ro
     - bnml_artifacts:/app/artifacts
     - bnml_models:/app/models
+  depends_on:
+    volume-init:
+      condition: service_completed_successfully
   restart: unless-stopped
 
 services:
+  volume-init:
+    image: alpine:3.20
+    command:
+      - /bin/sh
+      - -c
+      - mkdir -p /app/artifacts /app/models && chown -R 10001:10001 /app/artifacts /app/models
+    volumes:
+      - bnml_artifacts:/app/artifacts
+      - bnml_models:/app/models
+    restart: "no"
+
   bot-paper:
     <<: *bnml-common
     profiles: ["paper"]

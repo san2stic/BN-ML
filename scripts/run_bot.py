@@ -27,7 +27,7 @@ from ml_engine.adaptive_trainer import AdaptiveRetrainer, BackgroundRetrainWorke
 from ml_engine.drift_monitor import MarketDriftMonitor
 from ml_engine.predictor import MLEnsemblePredictor
 from monitoring.alerter import Alerter
-from monitoring.logger import setup_logger
+from monitoring.logger import resolve_writable_logs_dir, setup_logger
 from monitoring.realtime_prices import BinanceRealtimePriceMonitor
 from scanner.opportunity_scanner import MultiPairScanner
 from scripts.run_trainer import train_once
@@ -74,10 +74,17 @@ def maybe_start_dashboard(config: dict, args: argparse.Namespace, logger) -> tup
 
     script = str(dashboard_cfg.get("script", "monitoring/dashboard.py"))
     workspace = Path(__file__).resolve().parents[1]
-    logs_dir = Path(config.get("monitoring", {}).get("logs_dir", "artifacts/logs"))
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir, _ = resolve_writable_logs_dir(config)
     dashboard_log_path = logs_dir / "dashboard.log"
-    log_fh = dashboard_log_path.open("a", encoding="utf-8")
+    try:
+        log_fh = dashboard_log_path.open("a", encoding="utf-8")
+        stdout_target = log_fh
+        stderr_target = log_fh
+    except OSError as exc:
+        logger.warning("Dashboard log file unavailable at %s (%s). Redirecting to /dev/null.", dashboard_log_path, exc)
+        log_fh = None
+        stdout_target = subprocess.DEVNULL
+        stderr_target = subprocess.DEVNULL
 
     cmd = [
         sys.executable,
@@ -104,8 +111,8 @@ def maybe_start_dashboard(config: dict, args: argparse.Namespace, logger) -> tup
         cwd=str(workspace),
         env=streamlit_env,
         stdin=subprocess.DEVNULL,
-        stdout=log_fh,
-        stderr=log_fh,
+        stdout=stdout_target,
+        stderr=stderr_target,
     )
     logger.warning("Dashboard auto-launched on http://%s:%s (pid=%s)", address, port, proc.pid)
     return proc, log_fh
