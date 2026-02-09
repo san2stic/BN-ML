@@ -1,0 +1,145 @@
+environment: live
+base_quote: USDC
+
+exchange:
+  name: binance
+  testnet: false
+  rate_limit_ms: 200
+  timeout_ms: 10000
+  retry_attempts: 3
+  retry_backoff_sec: 0.5
+
+universe:
+  dynamic_base_quote_pairs: true
+  dynamic_refresh_sec: 900
+  pairs:
+    - BTC/USDC
+    - ETH/USDC
+    - SOL/USDC
+    - BNB/USDC
+    - XRP/USDC
+    - ADA/USDC
+    - DOGE/USDC
+  min_24h_volume_usdt: 1000000
+  max_pairs_scanned: 150
+  train_dynamic_pairs: true
+  train_max_pairs: 120
+  train_missing_only: true
+  model_max_age_hours: 24
+
+scanner:
+  scan_interval_sec: 300
+  top_n: 10
+  min_global_score: 60
+  min_ml_confidence: 65
+  spread_max_pct: 0.15
+  orderbook_depth_min_usdt: 50000
+
+model:
+  lookback_days: 60
+  training_window_days: 45
+  retrain_interval_hours: 6
+  retrain_check_interval_sec: 30
+  retrain_degradation_trigger_pct: 15
+  auto_retrain_enabled: true
+  auto_train_missing_models: true
+  auto_train_missing_batch_size: 5
+  auto_train_missing_disable_hpo: true
+  feature_limit: 50
+  sequence_length: 64
+  random_state: 42
+  acceleration:
+    mode: auto
+    cpu_n_jobs: -1
+    allow_cuda_fallback: true
+  execution:
+    cost_multiplier: 1.0
+  hpo:
+    enabled: true
+    max_samples: 900
+    max_splits: 3
+    rf_trials: 4
+    xgb_trials: 3
+    objective_weight_sharpe: 0.35
+    objective_weight_sortino: 0.30
+    objective_weight_accuracy: 0.10
+    objective_weight_return: 0.25
+    objective_weight_drawdown: 0.10
+    objective_weight_turnover: 0.05
+  labeling:
+    horizon_candles: 4
+    volatility_window: 96
+    volatility_multiplier: 0.60
+    atr_multiplier: 0.35
+    min_move_pct: 0.0015
+    max_move_pct: 0.0200
+    round_trip_cost_multiplier: 2.0
+    cost_safety_multiplier: 1.35
+  ensemble:
+    min_buy_proba: 0.42
+    min_sell_proba: 0.42
+    min_margin: 0.07
+    hold_bias: 0.02
+  rf:
+    n_estimators: 300
+    max_depth: 8
+    min_samples_leaf: 50
+  xgb:
+    n_estimators: 500
+    max_depth: 6
+    learning_rate: 0.03
+    subsample: 0.9
+    colsample_bytree: 0.8
+    reg_alpha: 0.01
+    reg_lambda: 1.0
+    early_stopping_rounds: 40
+  lstm:
+    enabled: false
+    epochs: 30
+    batch_size: 64
+    dropout: 0.25
+
+risk:
+  capital_total: auto
+  capital_total_fallback: 20
+  capital_active_ratio: 0.60
+  reserve_ratio: 0.30
+  cash_buffer_ratio: 0.10
+  max_positions: 5
+  min_position_pct_active: 0.01
+  max_position_pct_active: 0.20
+  max_daily_risk_pct: 0.02
+  max_weekly_risk_pct: 0.06
+  max_portfolio_exposure_pct: 0.70
+  max_position_drawdown_pct: 0.03
+  max_correlation: 0.70
+  stop_loss_atr_mult: 1.5
+  trailing_activation_pct: 0.02
+  trailing_atr_mult: 1.0
+  time_stop_hours: 48
+  fees_pct: 0.10
+  slippage_pct: 0.05
+  min_net_profit_pct: 0.30
+  circuit_breakers:
+    daily_drawdown_stop_pct: -5.0
+    max_consecutive_losses: 3
+    volatility_spike_ratio: 1.5
+
+monitoring:
+  log_level: INFO
+  logs_dir: artifacts/logs
+  metrics_dir: artifacts/metrics
+  alerts_enabled: true
+  dashboard:
+    auto_launch_with_bot: true
+    script: monitoring/dashboard.py
+    address: 127.0.0.1
+    port: 8501
+    auto_refresh_sec: 5
+    full_screen_default: true
+    timeframe_default: 4h
+    live_market_enabled: true
+    scan_stale_sec: 900
+
+storage:
+  sqlite_path: artifacts/state/bn_ml.db
