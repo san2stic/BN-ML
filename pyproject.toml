@@ -21,6 +21,9 @@ dependencies = [
   "streamlit>=1.41.0",
   "plotly>=5.18.0",
   "websocket-client>=1.8.0",
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "prometheus-client>=0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -45,12 +48,14 @@ bnml-dod-report = "scripts.generate_dod_report:main"
 bnml-dod-30d = "scripts.run_dod_30d:main"
 bnml-hardware-probe = "scripts.hardware_probe:main"
 bnml-model-sync = "scripts.model_sync:main"
+bnml-api = "public_api.app:run"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.package-data]
 bn_ml = ["assets/*.yaml"]
+public_api = ["site/*.html", "site/*.css", "site/*.js"]
 
 [tool.setuptools.packages.find]
-include = ["bn_ml*", "data_manager*", "ml_engine*", "monitoring*", "scanner*", "scripts*", "trader*"]
+include = ["bn_ml*", "data_manager*", "ml_engine*", "monitoring*", "public_api*", "scanner*", "scripts*", "trader*"]

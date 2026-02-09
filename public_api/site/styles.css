@@ -1,0 +1,179 @@
+:root {
+  --bg-1: #07142b;
+  --bg-2: #042d2d;
+  --card: rgba(10, 24, 46, 0.78);
+  --card-border: rgba(120, 151, 207, 0.26);
+  --text: #e8f0ff;
+  --muted: #9eb7e8;
+  --buy: #2fe3a5;
+  --sell: #ff6a76;
+  --hold: #ffca66;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(27, 124, 255, 0.22), transparent 40%),
+    radial-gradient(circle at 80% 0%, rgba(0, 216, 164, 0.16), transparent 32%),
+    linear-gradient(130deg, var(--bg-1), var(--bg-2) 62%);
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.layout {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 2.4rem 1rem 2rem;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(1.7rem, 4vw, 3rem);
+}
+
+.kicker {
+  margin: 0 0 0.45rem;
+  color: #7bd0ff;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}
+
+.lead {
+  margin-top: 0.8rem;
+  color: var(--muted);
+  max-width: 700px;
+}
+
+.status-grid {
+  margin-top: 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: 0.9rem;
+  backdrop-filter: blur(6px);
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #c6dbff;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9rem;
+  margin: 0.6rem 0 0;
+}
+
+.signal-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.signal-card {
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  padding: 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  background: rgba(8, 19, 37, 0.62);
+}
+
+.signal-card span {
+  letter-spacing: 0.06em;
+  font-size: 0.8rem;
+}
+
+.signal-card strong {
+  font-size: 1.4rem;
+}
+
+.signal-card.buy strong {
+  color: var(--buy);
+}
+
+.signal-card.sell strong {
+  color: var(--sell);
+}
+
+.signal-card.hold strong {
+  color: var(--hold);
+}
+
+.table-wrap {
+  margin-top: 1rem;
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  overflow: auto;
+  background: rgba(7, 16, 32, 0.8);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.7rem;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: rgba(9, 20, 40, 0.96);
+  color: #bdd5ff;
+  z-index: 2;
+}
+
+tbody tr:nth-child(2n) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.signal-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+}
+
+.signal-pill.BUY {
+  background: rgba(47, 227, 165, 0.14);
+  color: var(--buy);
+}
+
+.signal-pill.SELL {
+  background: rgba(255, 106, 118, 0.14);
+  color: var(--sell);
+}
+
+.signal-pill.HOLD {
+  background: rgba(255, 202, 102, 0.14);
+  color: var(--hold);
+}
+
+@media (max-width: 880px) {
+  .status-grid,
+  .signal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

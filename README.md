@@ -189,7 +189,43 @@ Rapport synthese DoD:
 python3 -m scripts.generate_dod_report --days 30
 ```
 
-## 4) Dashboard "Trader Terminal"
+API publique (site + endpoints + websocket):
+
+```bash
+bnml-api
+```
+
+## 4) Docker Full Stack (bot + monitoring + site public)
+
+Build:
+
+```bash
+docker compose build
+```
+
+Paper stack complète:
+
+```bash
+docker compose --profile paper up -d bot-paper dashboard api prometheus grafana
+```
+
+Live stack complète:
+
+```bash
+docker compose --profile live up -d bot-live dashboard api prometheus grafana
+```
+
+Endpoints:
+- site public + API: `http://localhost:8000`
+- docs API: `http://localhost:8000/docs`
+- websocket predictions: `ws://localhost:8000/ws/predictions`
+- dashboard Trader Terminal: `http://localhost:8501`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000`
+
+Détails ops/volumes/troubleshooting: `docs/deployment_docker.md`.
+
+## 5) Dashboard "Trader Terminal"
 
 Le dashboard inclut:
 - mode full-screen desk
@@ -209,7 +245,7 @@ Paramètres dans `configs/bot.yaml`:
 - `monitoring.dashboard.live_market_enabled`
 - `monitoring.dashboard.scan_stale_sec`
 
-## 5) Modèles ML par crypto
+## 6) Modèles ML par crypto
 
 Chaque symbole a son bundle dédié:
 - `models/<SYMBOL_KEY>/rf.joblib`
@@ -239,7 +275,7 @@ Réglages HPO:
 - `model.train_ohlcv_limit`
 - `scanner.ohlcv_limit`
 
-## 6) Hardware (Mac M1 + Ubuntu RTX 2070 Super)
+## 7) Hardware (Mac M1 + Ubuntu RTX 2070 Super)
 
 Probe matériel:
 
@@ -256,7 +292,7 @@ Ubuntu + RTX:
 
 Le fallback CPU est géré via `model.acceleration.allow_cuda_fallback`.
 
-## 7) Sécurité live
+## 8) Sécurité live
 
 Le bot bloque le démarrage live si:
 - clés API absentes
@@ -270,12 +306,13 @@ Recommandations:
 - garder `scripts.kill_switch` prêt
 - brancher au moins un canal `monitoring.alerting` (webhook/Telegram/email) avant live continu
 
-## 8) Fichiers importants
+## 9) Fichiers importants
 
 - `configs/bot.yaml`: configuration runtime
 - `scripts/run_bot.py`: boucle de trading
 - `scripts/run_trainer.py`: entraînement per-symbol
 - `monitoring/dashboard.py`: interface web
+- `public_api/app.py`: API publique + websocket + endpoint metrics
 - `artifacts/state/bn_ml.db`: état persistant (positions/trades/cycles)
 - `artifacts/logs/dashboard.log`: logs Streamlit
 - `artifacts/metrics/latest_scan.csv`: snapshot complet des paires scannées
@@ -284,7 +321,7 @@ Recommandations:
 - `docs/runbook_incident.md`: procedures incident
 - `docs/deployment_docker.md`: deploiement Docker
 
-## 9) Checklist avant push Git
+## 10) Checklist avant push Git
 
 ```bash
 python3 -m pytest -q
@@ -307,7 +344,7 @@ Si tu pushes un setup live, ne commite jamais `.env` ou des secrets.
 - Template PR: `.github/PULL_REQUEST_TEMPLATE.md`
 - Templates issues: `.github/ISSUE_TEMPLATE/`
 
-## 10) Sync modèles GitHub (publisher/client)
+## 11) Sync modèles GitHub (publisher/client)
 
 Objectif:
 - serveur publisher: entraîne chaque jour à `00:00`, puis push les modèles vers un repo GitHub dédié

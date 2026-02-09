@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: BNML Runtime
+    orgId: 1
+    folder: BN-ML
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
+

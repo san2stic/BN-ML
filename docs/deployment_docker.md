@@ -2,60 +2,87 @@
 
 ## Prerequisites
 - Docker + Docker Compose v2
-- `.env` configure avec credentials Binance si mode live
+- `.env` configuré (`BINANCE_API_KEY`, `BINANCE_API_SECRET`) si mode live
 - `configs/bot.yaml` valide
+
+## Stack incluse
+- `bot-paper` ou `bot-live` (runtime trading)
+- `dashboard` (Streamlit Trader Terminal)
+- `api` (site public + API temps réel + `/metrics`)
+- `prometheus` (scrape monitoring)
+- `grafana` (visualisation)
+
+Ports exposés:
+- API + site public: `8000`
+- Dashboard Streamlit: `8501`
+- Prometheus: `9090`
+- Grafana: `3000` (login par défaut `admin` / `admin`)
 
 ## Build
 ```bash
 docker compose build
 ```
 
-## Profiles
-- `paper`: campagne DoD paper 30 jours + dashboard
-- `live`: runtime live + dashboard
-
-## Start Paper DoD Campaign
+## Start Paper Stack
 ```bash
-docker compose --profile paper up -d bot-paper dashboard
+docker compose --profile paper up -d bot-paper dashboard api prometheus grafana
 ```
 
-Verifier:
+## Start Live Stack
 ```bash
-docker compose ps
-docker compose logs -f bot-paper
+docker compose --profile live up -d bot-live dashboard api prometheus grafana
 ```
 
-## Start Live Runtime
+## URLs
+- Site public/API: `http://localhost:8000`
+- Docs OpenAPI: `http://localhost:8000/docs`
+- WebSocket prédictions: `ws://localhost:8000/ws/predictions`
+- Dashboard trading: `http://localhost:8501`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000`
+
+## Ops services (on demand)
+Trainer:
 ```bash
-docker compose --profile live up -d bot-live dashboard
+docker compose --profile ops run --rm trainer
 ```
 
-## Generate DoD Summary Report
+Rapport DoD:
 ```bash
-docker compose --profile paper run --rm report
+docker compose --profile ops run --rm report
 ```
 
-Artefacts:
-- `artifacts/reports/dod/dod_v1_summary.md`
-- `artifacts/reports/dod/daily/*.json`
+## Runtime persistence
+Le compose persiste automatiquement:
+- `artifacts/` via volume `bnml_artifacts`
+- `models/` via volume `bnml_models`
+- données Prometheus/Grafana via `prometheus_data` et `grafana_data`
 
-## Stop Services
+## Monitoring metrics (Prometheus)
+Métriques exposées via `api:/metrics`:
+- `bnml_scan_rows`, `bnml_scan_age_seconds`, `bnml_scan_signal_count`
+- `bnml_account_total_capital`, `bnml_account_active_capital`
+- `bnml_account_daily_pnl_pct`, `bnml_account_weekly_pnl_pct`
+- `bnml_open_positions`, `bnml_total_trades`, `bnml_total_cycles`
+- `bnml_market_drift_detected`
+
+## Stop
 ```bash
 docker compose down
 ```
 
-## Recommended Operations
-1. Lancer `python3 -m scripts.check_dod_daily --fail-on-violation` quotidiennement.
-2. Garder `storage.backup.enabled: true`.
-3. En live, ne jamais desactiver preflight et circuit breakers.
+Stop + suppression volumes:
+```bash
+docker compose down -v
+```
 
 ## Troubleshooting
-- Dashboard inaccessible:
-  - verifier port `8501`
-  - verifier `docker compose logs dashboard`
-- Bot ne demarre pas en live:
-  - verifier `.env` (`BINANCE_API_KEY`, `BINANCE_API_SECRET`)
-  - verifier `exchange.testnet: false`
-- Aucun rapport genere:
-  - verifier presence `artifacts/state/bn_ml.db`
-  - executer `docker compose run --rm report`
+- API non accessible:
+  - `docker compose logs -f api`
+  - vérifier `docker compose ps`
+- Dashboard vide:
+  - vérifier que `bot-paper`/`bot-live` écrit bien `artifacts/metrics/latest_scan.csv`
+- Grafana sans datasource:
+  - redémarrer `grafana` après `prometheus`
+  - vérifier les mounts `monitoring/grafana/provisioning/*`
+

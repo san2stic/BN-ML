@@ -1,51 +1,94 @@
-version: "3.9"
+x-bnml-common: &bnml-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+  environment:
+    BNML_CONFIG_PATH: /app/configs/bot.yaml
+  volumes:
+    - ./configs:/app/configs:ro
+    - bnml_artifacts:/app/artifacts
+    - bnml_models:/app/models
+  restart: unless-stopped
 
 services:
   bot-paper:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    volumes:
-      - ./:/app
-    restart: unless-stopped
+    <<: *bnml-common
     profiles: ["paper"]
-    command: ["python", "-m", "scripts.run_dod_30d", "--days", "30", "--disable-retrain"]
+    command: ["python", "-m", "scripts.run_bot", "--paper", "--no-dashboard"]
 
   bot-live:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    volumes:
-      - ./:/app
-    restart: unless-stopped
+    <<: *bnml-common
     profiles: ["live"]
     command: ["python", "-m", "scripts.run_bot", "--live", "--no-dashboard"]
 
+  trainer:
+    <<: *bnml-common
+    profiles: ["ops"]
+    command: ["python", "-m", "scripts.run_trainer", "--train-missing-only"]
+    restart: "no"
+
   dashboard:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    volumes:
-      - ./:/app
-    restart: unless-stopped
+    <<: *bnml-common
     profiles: ["paper", "live"]
     command: ["streamlit", "run", "monitoring/dashboard.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
     ports:
       - "8501:8501"
 
-  report:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    volumes:
-      - ./:/app
+  api:
+    <<: *bnml-common
     profiles: ["paper", "live"]
+    command: ["uvicorn", "public_api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["paper", "live"]
+    depends_on:
+      - api
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    profiles: ["paper", "live"]
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  report:
+    <<: *bnml-common
+    profiles: ["ops"]
     command: ["python", "-m", "scripts.generate_dod_report", "--days", "30"]
+    restart: "no"
+
+volumes:
+  bnml_artifacts:
+  bnml_models:
+  prometheus_data:
+  grafana_data:
