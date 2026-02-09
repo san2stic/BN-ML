@@ -272,3 +272,67 @@ python3 -m scripts.run_trainer --paper --symbol BTC/USDC
 ```
 
 Si tu pushes un setup live, ne commite jamais `.env` ou des secrets.
+
+## 10) Sync modèles GitHub (publisher/client)
+
+Objectif:
+- serveur publisher: entraîne chaque jour à `00:00`, puis push les modèles vers un repo GitHub dédié
+- client(s): pull chaque jour à `06:00`, puis resynchronisent leur dossier local `models/`
+
+Configuration (`configs/bot.yaml`):
+
+```yaml
+model_sync:
+  enabled: false
+  repo_dir: ""
+  remote: origin
+  branch: main
+  repo_models_subdir: models
+  publisher:
+    schedule: "00:00"
+    train_before_push: true
+  client:
+    schedule: "06:00"
+```
+
+Commande publisher (one-shot):
+
+```bash
+python3 -m scripts.model_sync publish \
+  --config configs/bot.yaml \
+  --repo-dir /ABS/PATH/model-registry-repo
+```
+
+Commande client (one-shot):
+
+```bash
+python3 -m scripts.model_sync pull \
+  --config configs/bot.yaml \
+  --repo-dir /ABS/PATH/model-registry-repo \
+  --models-dir models
+```
+
+Mode daemon (scheduler intégré):
+
+```bash
+# serveur: train + push à 00:00 local
+python3 -m scripts.model_sync daemon --role publisher --repo-dir /ABS/PATH/model-registry-repo
+
+# client: pull + sync local à 06:00 local
+python3 -m scripts.model_sync daemon --role client --repo-dir /ABS/PATH/model-registry-repo
+```
+
+Exemple cron (recommandé en production):
+
+```cron
+# Publisher à 00:00 tous les jours
+0 0 * * * cd /ABS/PATH/BN-ML && /usr/bin/python3 -m scripts.model_sync publish --config configs/bot.yaml --repo-dir /ABS/PATH/model-registry-repo >> artifacts/logs/model_sync_publisher.log 2>&1
+
+# Client à 06:00 tous les jours
+0 6 * * * cd /ABS/PATH/BN-ML && /usr/bin/python3 -m scripts.model_sync pull --config configs/bot.yaml --repo-dir /ABS/PATH/model-registry-repo --models-dir models >> artifacts/logs/model_sync_client.log 2>&1
+```
+
+Pré-requis Git:
+- repo Git local cloné avec remote `origin` pointant vers GitHub
+- auth configurée (SSH key ou token)
+- worktree propre avant sync (sinon blocage par défaut)

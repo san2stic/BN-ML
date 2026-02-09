@@ -156,6 +156,18 @@ model:
     p_value_threshold: 0.05
     vol_ratio_threshold: 1.8
 
+model_sync:
+  enabled: false
+  repo_dir: ""
+  remote: origin
+  branch: main
+  repo_models_subdir: models
+  publisher:
+    schedule: "00:00"
+    train_before_push: true
+  client:
+    schedule: "06:00"
+
 risk:
   capital_total: auto
   capital_total_fallback: 20
