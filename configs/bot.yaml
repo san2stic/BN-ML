@@ -83,7 +83,7 @@ model:
     max_candles_per_timeframe: 600
     extra_candles_buffer: 96
   acceleration:
-    mode: auto
+    mode: cuda
     cpu_n_jobs: -1
     allow_cuda_fallback: true
   execution:

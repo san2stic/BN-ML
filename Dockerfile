@@ -14,4 +14,4 @@ COPY . .
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
 
-CMD ["python", "-m", "scripts.run_bot", "--once", "--paper"]
+CMD ["python", "-m", "scripts.runpod_train_only", "--paper", "--train-missing-only", "--models-dir", "models", "--archive-path", "artifacts/exports/models_latest.zip"]

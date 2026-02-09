@@ -50,6 +50,7 @@ bnml-dod-report = "scripts.generate_dod_report:main"
 bnml-dod-30d = "scripts.run_dod_30d:main"
 bnml-hardware-probe = "scripts.hardware_probe:main"
 bnml-model-sync = "scripts.model_sync:main"
+bnml-runpod-train = "scripts.runpod_train_only:main"
 bnml-api = "public_api.app:run"
 
 [tool.setuptools]

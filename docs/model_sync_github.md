@@ -94,6 +94,14 @@ docker compose --profile paper up -d bot-paper model-sync-runpod dashboard api p
 docker compose --profile live up -d bot-live model-sync-runpod dashboard api prometheus grafana
 ```
 
+Image RunPod recommandée:
+- construire depuis `Dockerfile` (CMD par défaut = `scripts.runpod_train_only`, donc pas de `run_bot`)
+- ou lancer explicitement:
+
+```bash
+python -m scripts.runpod_train_only --paper --train-missing-only --models-dir models --archive-path artifacts/exports/models_latest.zip
+```
+
 ## 4) Sécurité opérationnelle
 
 - ne jamais commiter de clé API RunPod

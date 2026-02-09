@@ -419,6 +419,7 @@ python3 -m scripts.model_sync daemon --role runpod_client --config configs/bot.y
 ## 12) Docker (RunPod quotidien)
 
 Le compose inclut un service dédié `model-sync-runpod` qui exécute le daemon quotidien (`--role runpod_client`).
+L'image Docker utilise un CMD par défaut train-only (`scripts.runpod_train_only`), pas `run_bot`.
 
 ```bash
 # stack paper avec sync RunPod
