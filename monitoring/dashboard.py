@@ -341,25 +341,23 @@ def load_live_aux_metrics(config_path: str) -> pd.DataFrame:
 def compose_scan_frame(scan: pd.DataFrame, live_market: pd.DataFrame, scan_is_stale: bool) -> tuple[pd.DataFrame, str]:
     if live_market.empty and scan.empty:
         return pd.DataFrame(), "none"
-    if live_market.empty:
-        result = scan.copy()
-        result["source"] = "scanner"
-        return result, "scanner_only"
-    if scan.empty or scan_is_stale:
-        return live_market.copy(), "live_market"
+    if scan.empty:
+        # No scanner output available: fallback to heuristic live market view.
+        return live_market.copy(), "live_market_fallback"
 
     merged = scan.copy()
-    merged["source"] = "scanner"
+    merged["source"] = "scanner_stale" if scan_is_stale else "scanner"
 
-    enrich_cols = ["symbol", "last_price", "change_24h_pct", "quote_volume_24h"]
-    live_enrich = live_market[enrich_cols].drop_duplicates("symbol")
-    merged = merged.merge(live_enrich, on="symbol", how="left")
+    # Enrich scanner rows with live prices/volumes without changing scanner signals.
+    if not live_market.empty:
+        enrich_cols = ["symbol", "last_price", "change_24h_pct", "quote_volume_24h"]
+        live_enrich = live_market[enrich_cols].drop_duplicates("symbol")
+        merged = merged.merge(live_enrich, on="symbol", how="left")
 
-    existing = set(merged["symbol"].astype(str))
-    missing = live_market[~live_market["symbol"].astype(str).isin(existing)].copy()
-    if not missing.empty:
-        merged = pd.concat([merged, missing], ignore_index=True, sort=False)
-
+    if live_market.empty:
+        return merged, "scanner_only"
+    if scan_is_stale:
+        return merged, "scanner_stale"
     return merged, "scanner_plus_live"
 
 
@@ -972,7 +970,8 @@ def main() -> None:
 
     runtime = load_runtime_data(str(DB_PATH))
     scan = load_scan_data(str(SCAN_PATH))
-    scan_is_stale = _scan_age_seconds(str(SCAN_PATH)) > scan_stale_sec
+    scan_age_sec = _scan_age_seconds(str(SCAN_PATH))
+    scan_is_stale = scan_age_sec > scan_stale_sec
 
     live_market = pd.DataFrame()
     if live_market_enabled:
@@ -995,6 +994,15 @@ def main() -> None:
         st.warning("Mode PAPER actif: le capital affiché est simulé (pas le wallet Binance réel).")
     elif mode == "LIVE" and not account.get("exchange_synced_at"):
         st.warning("Mode LIVE actif mais capital non synchronisé avec Binance pour le moment.")
+
+    if market_data_mode == "scanner_stale":
+        st.warning(
+            f"Snapshot scanner stale ({int(scan_age_sec)}s): signaux conservés depuis le dernier scan bot."
+        )
+    elif market_data_mode == "live_market_fallback":
+        st.warning(
+            "Aucun snapshot scanner disponible: signaux affichés en fallback live_market (heuristique dashboard)."
+        )
 
     render_hero(
         mode=mode,
