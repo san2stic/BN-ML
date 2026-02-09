@@ -8,14 +8,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, REGISTRY, generate_latest
 
 from bn_ml.config import load_config
-from public_api.data_access import load_account_state, load_recent_trades, load_runtime_summary, read_prediction_snapshot
+from public_api.data_access import (
+    build_models_archive,
+    list_model_bundles,
+    load_account_state,
+    load_recent_trades,
+    load_runtime_summary,
+    load_training_status,
+    read_prediction_snapshot,
+)
 from public_api.metrics import BNMLRuntimeCollector
 
 HTTP_REQUESTS = Counter(
@@ -35,6 +43,7 @@ HTTP_LATENCY = Histogram(
 class APISettings:
     config_path: Path
     db_path: Path
+    models_dir: Path
     scan_path: Path
     opportunities_path: Path
     ws_poll_sec: float
@@ -70,6 +79,10 @@ def _load_settings() -> APISettings:
 
     metrics_dir = _resolve_path(str(monitoring_cfg.get("metrics_dir", "artifacts/metrics")), cwd=cwd)
     db_path = _resolve_path(str(storage_cfg.get("sqlite_path", "artifacts/state/bn_ml.db")), cwd=cwd)
+    models_dir = _resolve_path(
+        str(os.getenv("BNML_MODELS_DIR", api_cfg.get("models_dir", "models"))),
+        cwd=cwd,
+    )
 
     ws_poll_sec = float(os.getenv("BNML_API_WS_POLL_SEC", api_cfg.get("ws_poll_sec", 2.0)))
     ws_poll_sec = max(0.5, min(ws_poll_sec, 10.0))
@@ -84,6 +97,7 @@ def _load_settings() -> APISettings:
     return APISettings(
         config_path=config_path,
         db_path=db_path,
+        models_dir=models_dir,
         scan_path=metrics_dir / "latest_scan.csv",
         opportunities_path=metrics_dir / "latest_opportunities.csv",
         ws_poll_sec=ws_poll_sec,
@@ -133,18 +147,26 @@ def create_app() -> FastAPI:
     async def index() -> FileResponse:
         return FileResponse(site_dir / "index.html")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> FileResponse:
+        return FileResponse(site_dir / "favicon.svg", media_type="image/svg+xml")
+
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         snapshot = read_prediction_snapshot(settings.scan_path, limit=1)
+        model_bundles = list_model_bundles(settings.models_dir)
         return {
             "status": "ok",
             "server_time_utc": datetime.now(timezone.utc).isoformat(),
             "config_path": str(settings.config_path),
             "db_path": str(settings.db_path),
+            "models_dir": str(settings.models_dir),
             "scan_path": str(settings.scan_path),
             "scan_available": bool(snapshot.get("total_rows", 0)),
             "scan_age_sec": snapshot.get("age_sec"),
             "db_available": settings.db_path.exists(),
+            "models_available": settings.models_dir.exists(),
+            "model_bundles": len(model_bundles),
         }
 
     @app.get("/api/v1/predictions")
@@ -180,6 +202,54 @@ def create_app() -> FastAPI:
         payload = load_runtime_summary(settings.db_path)
         payload["scan"] = read_prediction_snapshot(settings.scan_path, limit=1)
         return JSONResponse(payload)
+
+    @app.get("/api/v1/training/status")
+    async def training_status() -> JSONResponse:
+        payload = load_training_status(settings.db_path)
+        if not payload:
+            payload = {
+                "status": "idle",
+                "phase": "waiting",
+                "current_symbol": None,
+                "progress_pct": 0.0,
+                "symbols_queued": 0,
+                "symbols_completed": 0,
+                "symbols_trained": 0,
+                "symbols_errors": 0,
+            }
+        return JSONResponse(payload)
+
+    @app.get("/api/v1/models")
+    async def models() -> JSONResponse:
+        bundles = list_model_bundles(settings.models_dir)
+        return JSONResponse(
+            {
+                "models_dir": str(settings.models_dir),
+                "total_bundles": len(bundles),
+                "total_files": int(sum(int(item.get("file_count", 0)) for item in bundles)),
+                "total_size_bytes": int(sum(int(item.get("size_bytes", 0)) for item in bundles)),
+                "rows": bundles,
+            }
+        )
+
+    @app.get("/api/v1/models/download")
+    async def download_models(model_key: Optional[str] = Query(default=None)) -> StreamingResponse:
+        try:
+            filename, archive_bytes, file_count, total_bytes = build_models_archive(
+                models_dir=settings.models_dir,
+                model_key=model_key,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-BNML-Archive-Files": str(file_count),
+            "X-BNML-Archive-Bytes": str(total_bytes),
+        }
+        return StreamingResponse(iter([archive_bytes]), media_type="application/zip", headers=headers)
 
     @app.get("/metrics")
     async def metrics() -> Response:

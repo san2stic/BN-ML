@@ -121,6 +121,12 @@ Entraînement incrémental (manquants/anciens uniquement):
 bnml-trainer --train-missing-only
 ```
 
+Boucle d'entraînement automatique (conteneur/process dédié):
+
+```bash
+bnml-trainer-auto --train-missing-only
+```
+
 Forcer entraînement complet:
 
 ```bash
@@ -206,14 +212,16 @@ docker compose build
 Paper stack complète:
 
 ```bash
-docker compose --profile paper up -d bot-paper dashboard api prometheus grafana
+docker compose --profile paper up -d bot-paper trainer-auto dashboard api prometheus grafana
 ```
 
 Live stack complète:
 
 ```bash
-docker compose --profile live up -d bot-live dashboard api prometheus grafana
+docker compose --profile live up -d bot-live trainer-auto dashboard api prometheus grafana
 ```
+
+Note Docker: `bot-paper`/`bot-live` sont lancés avec `--disable-retrain`; le retrain est délégué au conteneur `trainer-auto`.
 
 Endpoints:
 - site public + API: `http://localhost:8000`

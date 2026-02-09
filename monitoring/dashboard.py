@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import sqlite3
 import sys
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,7 +36,7 @@ TIMEFRAME_WINDOWS = {
 }
 
 CHART_PANELS = ["Opportunity Heatmap", "Equity & Drawdown", "Cycle Flow", "Signal Matrix", "Portfolio Allocation", "PnL Distribution"]
-TABLE_PANELS = ["Execution Blotter", "Cycle Feed", "Opportunity Book", "Model Performance"]
+TABLE_PANELS = ["Execution Blotter", "Cycle Feed", "Opportunity Book", "Model Performance", "Training & Downloads"]
 SIDEBAR_PANELS = ["Watchlist", "Risk Flags", "Open Position Monitor"]
 ALL_PANELS = CHART_PANELS + TABLE_PANELS + SIDEBAR_PANELS
 
@@ -83,7 +85,13 @@ def load_dashboard_settings() -> dict[str, Any]:
 
 @st.cache_data(ttl=15)
 def load_runtime_data(db_path: str) -> dict[str, Any]:
-    payload = {"account": {}, "trades": pd.DataFrame(), "cycles": pd.DataFrame(), "positions": pd.DataFrame()}
+    payload = {
+        "account": {},
+        "training_status": {},
+        "trades": pd.DataFrame(),
+        "cycles": pd.DataFrame(),
+        "positions": pd.DataFrame(),
+    }
 
     path = Path(db_path)
     if not path.exists():
@@ -95,6 +103,9 @@ def load_runtime_data(db_path: str) -> dict[str, Any]:
             row = conn.execute("SELECT value_json FROM kv_state WHERE key='account_state'").fetchone()
             if row and row[0]:
                 payload["account"] = _safe_json(row[0])
+            training_row = conn.execute("SELECT value_json FROM kv_state WHERE key='training_status'").fetchone()
+            if training_row and training_row[0]:
+                payload["training_status"] = _safe_json(training_row[0])
 
         if _table_exists(conn, "trades"):
             trades = pd.read_sql_query(
@@ -774,6 +785,245 @@ def render_model_performance(models_df: pd.DataFrame) -> None:
             "rf_sortino": st.column_config.NumberColumn("RF Sortino", format="%.3f"),
         },
     )
+
+
+@st.cache_data(ttl=60)
+def load_model_bundle_catalog() -> pd.DataFrame:
+    if not MODELS_DIR.exists():
+        return pd.DataFrame()
+    rows: list[dict[str, Any]] = []
+    for bundle_dir in sorted(MODELS_DIR.iterdir()):
+        if not bundle_dir.is_dir():
+            continue
+        files = [p for p in bundle_dir.rglob("*") if p.is_file()]
+        if not files:
+            continue
+        meta: dict[str, Any] = {}
+        meta_path = bundle_dir / "metadata.json"
+        if meta_path.exists():
+            try:
+                meta = _safe_json(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        total_bytes = 0
+        for file_path in files:
+            try:
+                total_bytes += int(file_path.stat().st_size)
+            except OSError:
+                continue
+        rows.append(
+            {
+                "model_key": bundle_dir.name,
+                "symbol": str(meta.get("symbol", bundle_dir.name)),
+                "trained_at": str(meta.get("trained_at", "")),
+                "file_count": len(files),
+                "size_mb": float(total_bytes / (1024 * 1024)),
+            }
+        )
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df["trained_at"] = pd.to_datetime(df["trained_at"], errors="coerce", utc=True)
+    return df.sort_values("symbol").reset_index(drop=True)
+
+
+def _list_model_files(model_key: str | None = None) -> list[Path]:
+    if not MODELS_DIR.exists():
+        return []
+    target_dirs: list[Path]
+    if model_key:
+        candidate = MODELS_DIR / model_key
+        target_dirs = [candidate] if candidate.exists() and candidate.is_dir() else []
+    else:
+        target_dirs = [p for p in MODELS_DIR.iterdir() if p.is_dir()]
+    files: list[Path] = []
+    for directory in target_dirs:
+        files.extend([p for p in directory.rglob("*") if p.is_file()])
+    return sorted(files)
+
+
+def _build_model_archive(model_key: str | None = None) -> tuple[bytes, str, int, float]:
+    files = _list_model_files(model_key=model_key)
+    if not files:
+        raise ValueError("No model files found to archive.")
+
+    now_tag = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    if model_key:
+        archive_name = f"bnml_models_{model_key}_{now_tag}.zip"
+        archive_root = Path(model_key)
+        base_dir = MODELS_DIR / model_key
+    else:
+        archive_name = f"bnml_models_all_{now_tag}.zip"
+        archive_root = Path("models")
+        base_dir = MODELS_DIR
+
+    total_bytes = 0
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for file_path in files:
+            try:
+                rel_path = file_path.relative_to(base_dir)
+            except ValueError:
+                continue
+            arcname = archive_root / rel_path
+            bundle.write(file_path, arcname=str(arcname))
+            try:
+                total_bytes += int(file_path.stat().st_size)
+            except OSError:
+                continue
+    return buffer.getvalue(), archive_name, len(files), float(total_bytes / (1024 * 1024))
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _to_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fmt_ts(raw: Any) -> str:
+    ts = pd.to_datetime(raw, errors="coerce", utc=True)
+    if pd.isna(ts):
+        return "n/a"
+    return ts.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def render_training_and_downloads(training_status: dict[str, Any]) -> None:
+    st.markdown("<div class='panel-title'>Model Training Progress & Downloads</div>", unsafe_allow_html=True)
+
+    status = str(training_status.get("status", "idle")).strip().lower() or "idle"
+    phase = str(training_status.get("phase", "waiting")).strip().lower() or "waiting"
+    trigger = str(training_status.get("trigger", "unknown")).strip().lower() or "unknown"
+    current_symbol = str(training_status.get("current_symbol", "")).strip()
+    progress_pct = max(0.0, min(100.0, _to_float(training_status.get("progress_pct", 0.0))))
+
+    status_label = {
+        "running": "RUNNING",
+        "completed": "COMPLETED",
+        "failed": "FAILED",
+        "idle": "IDLE",
+    }.get(status, status.upper())
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Status", status_label)
+    c2.metric("Trigger", trigger.upper())
+    c3.metric("Progress", f"{progress_pct:.1f}%")
+    c4.metric("Current Symbol", current_symbol or "-")
+
+    st.progress(progress_pct / 100.0, text=f"{progress_pct:.1f}%")
+
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Queued", _to_int(training_status.get("symbols_queued", 0)))
+    d2.metric("Completed", _to_int(training_status.get("symbols_completed", 0)))
+    d3.metric("Trained", _to_int(training_status.get("symbols_trained", 0)))
+    d4.metric("Errors", _to_int(training_status.get("symbols_errors", 0)))
+
+    st.caption(
+        f"Phase: {phase.upper()} | Started: {_fmt_ts(training_status.get('started_at'))} | "
+        f"Updated: {_fmt_ts(training_status.get('updated_at'))}"
+    )
+    if training_status.get("models_reloaded_at"):
+        st.caption(
+            f"Model reload: {_fmt_ts(training_status.get('models_reloaded_at'))} "
+            f"({str(training_status.get('reload_reason', 'n/a'))})"
+        )
+    if training_status.get("last_error"):
+        st.warning(str(training_status.get("last_error")))
+
+    catalog = load_model_bundle_catalog()
+    if catalog.empty:
+        st.info("No model bundles found in `models/`.")
+        return
+
+    display = catalog.copy()
+    display["trained_at"] = display["trained_at"].dt.strftime("%Y-%m-%d %H:%M")
+    st.dataframe(
+        display,
+        width="stretch",
+        height=260,
+        column_config={
+            "model_key": st.column_config.TextColumn("Bundle Key"),
+            "symbol": st.column_config.TextColumn("Symbol"),
+            "trained_at": st.column_config.TextColumn("Trained At"),
+            "file_count": st.column_config.NumberColumn("Files", format="%d"),
+            "size_mb": st.column_config.NumberColumn("Size MB", format="%.2f"),
+        },
+    )
+
+    st.markdown("**Download Model Artifacts**")
+    all_col, one_col = st.columns(2)
+
+    with all_col:
+        if st.button("Prepare full archive", key="prep-models-all", width="stretch"):
+            try:
+                archive_data, archive_name, file_count, size_mb = _build_model_archive(model_key=None)
+                st.session_state["models_archive_all"] = {
+                    "data": archive_data,
+                    "name": archive_name,
+                    "file_count": file_count,
+                    "size_mb": size_mb,
+                }
+                st.success(f"Archive ready: {file_count} files ({size_mb:.2f} MB).")
+            except ValueError as exc:
+                st.warning(str(exc))
+
+        all_archive = st.session_state.get("models_archive_all")
+        if isinstance(all_archive, dict):
+            st.download_button(
+                "Download all models (.zip)",
+                data=all_archive["data"],
+                file_name=str(all_archive["name"]),
+                mime="application/zip",
+                key="dl-models-all",
+                width="stretch",
+            )
+
+    with one_col:
+        options: list[tuple[str, str]] = []
+        for _, row in catalog.iterrows():
+            key = str(row["model_key"])
+            label = f"{str(row['symbol'])} ({key})"
+            options.append((label, key))
+        option_labels = [label for label, _ in options]
+        option_to_key = {label: key for label, key in options}
+        selected_label = st.selectbox(
+            "Select one bundle",
+            options=option_labels,
+            key="select-model-bundle",
+        )
+        selected_key = option_to_key.get(selected_label, "")
+
+        if st.button("Prepare selected bundle", key="prep-model-one", width="stretch"):
+            try:
+                archive_data, archive_name, file_count, size_mb = _build_model_archive(model_key=selected_key)
+                st.session_state["models_archive_one"] = {
+                    "data": archive_data,
+                    "name": archive_name,
+                    "file_count": file_count,
+                    "size_mb": size_mb,
+                    "model_key": selected_key,
+                }
+                st.success(f"Bundle ready: {file_count} files ({size_mb:.2f} MB).")
+            except ValueError as exc:
+                st.warning(str(exc))
+
+        one_archive = st.session_state.get("models_archive_one")
+        if isinstance(one_archive, dict) and str(one_archive.get("model_key", "")) == selected_key:
+            st.download_button(
+                "Download selected bundle (.zip)",
+                data=one_archive["data"],
+                file_name=str(one_archive["name"]),
+                mime="application/zip",
+                key="dl-models-one",
+                width="stretch",
+            )
 
 
 def runtime_mode(cycles: pd.DataFrame, account: dict[str, Any], trades: pd.DataFrame) -> str:
@@ -1469,6 +1719,8 @@ def main() -> None:
     scan, market_data_mode = compose_scan_frame(scan=scan, live_market=live_market, scan_is_stale=scan_is_stale)
 
     account = runtime["account"]
+    training_status_raw = runtime.get("training_status", {})
+    training_status = training_status_raw if isinstance(training_status_raw, dict) else {}
     trades = runtime["trades"]
     cycles = runtime["cycles"]
     positions = runtime["positions"]
@@ -1570,6 +1822,7 @@ def main() -> None:
             "Cycle Feed": lambda: render_cycle_feed(cycles_tf),
             "Opportunity Book": lambda: render_opportunity_book(scan),
             "Model Performance": lambda: render_model_performance(models_df),
+            "Training & Downloads": lambda: render_training_and_downloads(training_status),
         }
 
         active_tables = [name for name in TABLE_PANELS if name not in detached_panels]

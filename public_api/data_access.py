@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import sqlite3
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -167,3 +169,104 @@ def load_runtime_summary(db_path: Path) -> dict[str, Any]:
         return summary
     finally:
         conn.close()
+
+
+def load_training_status(db_path: Path) -> dict[str, Any]:
+    if not db_path.exists():
+        return {}
+
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "kv_state"):
+            return {}
+        row = conn.execute("SELECT value_json FROM kv_state WHERE key='training_status'").fetchone()
+        if row is None:
+            return {}
+        payload = _safe_json(row[0])
+        return payload if isinstance(payload, dict) else {}
+    finally:
+        conn.close()
+
+
+def list_model_bundles(models_dir: Path) -> list[dict[str, Any]]:
+    if not models_dir.exists() or not models_dir.is_dir():
+        return []
+
+    bundles: list[dict[str, Any]] = []
+    for bundle_dir in sorted(models_dir.iterdir()):
+        if not bundle_dir.is_dir():
+            continue
+        files = [p for p in bundle_dir.rglob("*") if p.is_file()]
+        if not files:
+            continue
+        metadata: dict[str, Any] = {}
+        metadata_path = bundle_dir / "metadata.json"
+        if metadata_path.exists():
+            try:
+                metadata = _safe_json(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                metadata = {}
+        size_bytes = 0
+        for file_path in files:
+            try:
+                size_bytes += int(file_path.stat().st_size)
+            except OSError:
+                continue
+
+        bundles.append(
+            {
+                "model_key": bundle_dir.name,
+                "symbol": str(metadata.get("symbol", bundle_dir.name)),
+                "trained_at": metadata.get("trained_at"),
+                "file_count": len(files),
+                "size_bytes": size_bytes,
+                "size_mb": float(size_bytes / (1024 * 1024)),
+            }
+        )
+    return bundles
+
+
+def build_models_archive(models_dir: Path, model_key: str | None = None) -> tuple[str, bytes, int, int]:
+    if model_key:
+        safe_key = str(model_key).strip()
+        if not safe_key or "/" in safe_key or "\\" in safe_key or ".." in safe_key:
+            raise ValueError("Invalid model_key")
+        target_dir = (models_dir / safe_key).resolve()
+        if not target_dir.exists() or not target_dir.is_dir() or target_dir.parent.resolve() != models_dir.resolve():
+            raise FileNotFoundError("Model bundle not found")
+        files = [p for p in target_dir.rglob("*") if p.is_file()]
+        if not files:
+            raise FileNotFoundError("Model bundle is empty")
+        archive_prefix = safe_key
+        archive_name = f"bnml_models_{safe_key}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.zip"
+        root_dir = target_dir
+    else:
+        if not models_dir.exists() or not models_dir.is_dir():
+            raise FileNotFoundError("Models directory not found")
+        files = [p for p in models_dir.rglob("*") if p.is_file()]
+        if not files:
+            raise FileNotFoundError("No model files found")
+        archive_prefix = "models"
+        archive_name = f"bnml_models_all_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.zip"
+        root_dir = models_dir
+
+    file_count = 0
+    total_bytes = 0
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file_path in sorted(files):
+            try:
+                rel_path = file_path.relative_to(root_dir)
+            except ValueError:
+                continue
+            arcname = Path(archive_prefix) / rel_path
+            archive.write(file_path, arcname=str(arcname))
+            file_count += 1
+            try:
+                total_bytes += int(file_path.stat().st_size)
+            except OSError:
+                continue
+
+    if file_count <= 0:
+        raise FileNotFoundError("No model files found")
+    return archive_name, buffer.getvalue(), file_count, total_bytes

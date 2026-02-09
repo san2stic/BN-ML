@@ -146,6 +146,7 @@ class TradingRuntime:
 
         db_path = str(config.get("storage", {}).get("sqlite_path", "artifacts/state/bn_ml.db"))
         self.store = StateStore(db_path=db_path)
+        self._init_training_status()
 
         self.account_state = self.store.load_account_state(default=self._default_account_state())
         self._model_components_lock = threading.Lock()
@@ -183,6 +184,47 @@ class TradingRuntime:
         self._sync_realtime_price_stream(force=True)
         self.store.save_account_state(self.account_state)
         self._start_retrain_worker_if_enabled()
+
+    def _init_training_status(self) -> None:
+        existing = self.store.get_state("training_status", None)
+        if isinstance(existing, dict) and existing:
+            return
+        self.store.set_state(
+            "training_status",
+            {
+                "status": "idle",
+                "phase": "waiting",
+                "trigger": "startup",
+                "started_at": None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "current_symbol": None,
+                "current_index": 0,
+                "symbols_requested": 0,
+                "symbols_queued": 0,
+                "symbols_completed": 0,
+                "symbols_trained": 0,
+                "symbols_errors": 0,
+                "symbols_skipped_up_to_date": 0,
+                "progress_pct": 0.0,
+            },
+        )
+
+    def _make_training_progress_callback(
+        self,
+        *,
+        trigger: str,
+        extra: dict[str, Any] | None = None,
+    ):
+        extra_payload = dict(extra or {})
+
+        def _callback(update: dict[str, Any]) -> None:
+            payload = dict(update)
+            payload["trigger"] = trigger
+            if extra_payload:
+                payload.update(extra_payload)
+            self.store.set_state("training_status", payload)
+
+        return _callback
 
     def _quote_asset(self) -> str:
         configured = str(self.config.get("base_quote", "")).strip().upper()
@@ -391,6 +433,7 @@ class TradingRuntime:
             symbols=self._resolve_pairs_for_training(),
             train_missing_only=bool(self.config.get("universe", {}).get("train_missing_only", False)),
             max_model_age_hours=float(self.config.get("universe", {}).get("model_max_age_hours", 24)),
+            progress_callback=self._make_training_progress_callback(trigger="periodic"),
         )
 
     def _train_missing_symbols_once(self, symbols: list[str]) -> dict[str, Any]:
@@ -413,6 +456,10 @@ class TradingRuntime:
             symbols=symbols,
             train_missing_only=True,
             max_model_age_hours=None,
+            progress_callback=self._make_training_progress_callback(
+                trigger="missing_models",
+                extra={"hpo_enabled": bool(not disable_hpo_for_missing)},
+            ),
         )
 
     def _on_models_updated(self, reason: str, result: dict[str, Any] | None) -> None:
@@ -435,6 +482,11 @@ class TradingRuntime:
                     trained = int(aggregate.get("symbols_trained", 0))
                 except (TypeError, ValueError):
                     trained = 0
+        training_status = self.store.get_state("training_status", {})
+        if isinstance(training_status, dict):
+            training_status["models_reloaded_at"] = datetime.now(timezone.utc).isoformat()
+            training_status["reload_reason"] = reason
+            self.store.set_state("training_status", training_status)
         self.logger.info("Model components reloaded after background training (%s, symbols_trained=%s)", reason, trained)
 
     def _on_missing_model(self, symbol: str) -> None:

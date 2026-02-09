@@ -10,6 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
+    <link rel="icon" href="/favicon.ico" />
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
@@ -34,6 +35,36 @@
         <article class="card">
           <h2>Account</h2>
           <p id="account-capital" class="mono">n/a</p>
+        </article>
+      </section>
+
+      <section class="status-grid training-grid">
+        <article class="card">
+          <h2>Training Status</h2>
+          <p id="training-status" class="mono">idle</p>
+          <p id="training-current-symbol" class="muted mono">symbol: -</p>
+          <p id="training-meta" class="muted mono">phase: waiting | trigger: n/a</p>
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+            <div id="training-progress-bar" class="progress-fill" style="width: 0%"></div>
+          </div>
+          <p id="training-progress-text" class="mono">0.0%</p>
+        </article>
+        <article class="card">
+          <h2>Training Counters</h2>
+          <div class="counter-grid mono">
+            <div><span>Queued</span><strong id="training-queued">0</strong></div>
+            <div><span>Completed</span><strong id="training-completed">0</strong></div>
+            <div><span>Trained</span><strong id="training-trained">0</strong></div>
+            <div><span>Errors</span><strong id="training-errors">0</strong></div>
+          </div>
+        </article>
+        <article class="card">
+          <h2>Model Downloads</h2>
+          <p class="muted">Bundles available: <span id="models-bundle-count" class="mono">0</span></p>
+          <a id="download-all-models" class="action-link" href="/api/v1/models/download">Download all models (.zip)</a>
+          <label class="bundle-label" for="models-bundle-select">Bundle</label>
+          <select id="models-bundle-select" class="bundle-select"></select>
+          <a id="download-selected-model" class="action-link disabled" href="#" aria-disabled="true">Download selected bundle (.zip)</a>
         </article>
       </section>
 
@@ -72,4 +103,3 @@
     <script src="/assets/app.js" defer></script>
   </body>
 </html>
-

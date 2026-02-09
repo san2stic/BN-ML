@@ -7,6 +7,7 @@
 
 ## Stack incluse
 - `bot-paper` ou `bot-live` (runtime trading)
+- `trainer-auto` (retrain périodique des modèles, conteneur dédié)
 - `dashboard` (Streamlit Trader Terminal)
 - `api` (site public + API temps réel + `/metrics`)
 - `prometheus` (scrape monitoring)
@@ -36,13 +37,17 @@ Validation CI:
 
 ## Start Paper Stack
 ```bash
-docker compose --profile paper up -d bot-paper dashboard api prometheus grafana
+docker compose --profile paper up -d bot-paper trainer-auto dashboard api prometheus grafana
 ```
 
 ## Start Live Stack
 ```bash
-docker compose --profile live up -d bot-live dashboard api prometheus grafana
+docker compose --profile live up -d bot-live trainer-auto dashboard api prometheus grafana
 ```
+
+Important:
+- `bot-paper` / `bot-live` démarrent avec `--disable-retrain`.
+- le retrain automatique est assuré par `trainer-auto` (boucle périodique basée sur `model.retrain_interval_hours`).
 
 ## URLs
 - Site public/API: `http://localhost:8000`
@@ -96,7 +101,7 @@ docker compose down -v
 - `PermissionError: [Errno 13] ... artifacts/...`:
   - relancer la stack (le service `volume-init` corrige les droits):
     - `docker compose down`
-    - `docker compose --profile paper up -d bot-paper dashboard api prometheus grafana`
+    - `docker compose --profile paper up -d bot-paper trainer-auto dashboard api prometheus grafana`
   - si besoin, correction manuelle one-shot:
     - `docker compose run --rm --user root bot-paper sh -lc "mkdir -p /app/artifacts /app/models && chown -R 10001:10001 /app/artifacts /app/models"`
 - Dashboard vide:

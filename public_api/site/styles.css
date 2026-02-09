@@ -57,6 +57,10 @@ body {
   gap: 0.8rem;
 }
 
+.training-grid {
+  margin-top: 0.9rem;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--card-border);
@@ -75,6 +79,88 @@ body {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.9rem;
   margin: 0.6rem 0 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.progress-track {
+  margin-top: 0.65rem;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2fe3a5, #7bd0ff);
+  transition: width 220ms ease;
+}
+
+.counter-grid {
+  margin-top: 0.55rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.counter-grid div {
+  background: rgba(7, 16, 32, 0.5);
+  border: 1px solid rgba(120, 151, 207, 0.2);
+  border-radius: 10px;
+  padding: 0.5rem 0.6rem;
+}
+
+.counter-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.74rem;
+  margin-bottom: 0.18rem;
+}
+
+.counter-grid strong {
+  font-size: 1rem;
+}
+
+.action-link {
+  display: inline-block;
+  margin-top: 0.55rem;
+  color: #7bd0ff;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.action-link:hover {
+  text-decoration: underline;
+}
+
+.action-link.disabled {
+  color: var(--muted);
+  pointer-events: none;
+  text-decoration: none;
+}
+
+.bundle-label {
+  display: block;
+  margin-top: 0.7rem;
+  color: #c6dbff;
+  font-size: 0.82rem;
+}
+
+.bundle-select {
+  margin-top: 0.3rem;
+  width: 100%;
+  background: rgba(7, 16, 32, 0.8);
+  color: var(--text);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 0.42rem 0.5rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.84rem;
 }
 
 .signal-grid {
@@ -176,4 +262,3 @@ tbody tr:nth-child(2n) {
     grid-template-columns: 1fr;
   }
 }
-

@@ -30,12 +30,17 @@ services:
   bot-paper:
     <<: *bnml-common
     profiles: ["paper"]
-    command: ["python", "-m", "scripts.run_bot", "--paper", "--no-dashboard"]
+    command: ["python", "-m", "scripts.run_bot", "--paper", "--no-dashboard", "--disable-retrain"]
 
   bot-live:
     <<: *bnml-common
     profiles: ["live"]
-    command: ["python", "-m", "scripts.run_bot", "--live", "--no-dashboard"]
+    command: ["python", "-m", "scripts.run_bot", "--live", "--no-dashboard", "--disable-retrain"]
+
+  trainer-auto:
+    <<: *bnml-common
+    profiles: ["paper", "live"]
+    command: ["python", "-m", "scripts.run_trainer_auto", "--train-missing-only"]
 
   trainer:
     <<: *bnml-common

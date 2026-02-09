@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,8 @@ from data_manager.features_engineer import FeatureEngineer
 from data_manager.fetch_data import BinanceDataManager
 from data_manager.multi_timeframe import MultiTimeframeFeatureBuilder
 from ml_engine.trainer import EnsembleTrainer
+
+TrainingProgressCallback = Callable[[dict[str, Any]], None]
 
 
 def parse_args() -> argparse.Namespace:
@@ -219,7 +222,25 @@ def train_once(
     train_missing_only: bool | None = None,
     max_model_age_hours: float | None = None,
     models_dir: str = "models",
+    progress_callback: TrainingProgressCallback | None = None,
 ) -> dict:
+    started_at = datetime.now(timezone.utc).isoformat()
+
+    def _emit_progress(**payload: Any) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(
+                {
+                    "started_at": started_at,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    **payload,
+                }
+            )
+        except Exception:
+            # Progress callbacks are best-effort and must not break training.
+            return
+
     trainer = EnsembleTrainer(config)
     universe_cfg = config.get("universe", {})
     if train_missing_only is None:
@@ -234,13 +255,41 @@ def train_once(
         models_dir=models_dir,
         max_model_age_hours=max_model_age_hours,
     )
+    queue_count = len(target_symbols)
+
+    _emit_progress(
+        status="running",
+        phase="queued",
+        current_symbol=None,
+        current_index=0,
+        symbols_requested=len(target_symbols_all),
+        symbols_queued=queue_count,
+        symbols_completed=0,
+        symbols_trained=0,
+        symbols_errors=0,
+        symbols_skipped_up_to_date=len(skipped_up_to_date),
+        progress_pct=0.0 if queue_count > 0 else 100.0,
+    )
 
     saved_paths: list[str] = []
     metrics_by_symbol: dict[str, dict] = {}
     best_params_by_symbol: dict[str, dict] = {}
     skipped_errors: dict[str, str] = {}
 
-    for symbol in target_symbols:
+    for index, symbol in enumerate(target_symbols, start=1):
+        _emit_progress(
+            status="running",
+            phase="training",
+            current_symbol=symbol,
+            current_index=index,
+            symbols_requested=len(target_symbols_all),
+            symbols_queued=queue_count,
+            symbols_completed=index - 1,
+            symbols_trained=len(metrics_by_symbol),
+            symbols_errors=len(skipped_errors),
+            symbols_skipped_up_to_date=len(skipped_up_to_date),
+            progress_pct=(float(index - 1) / float(queue_count) * 100.0) if queue_count > 0 else 100.0,
+        )
         try:
             dataset, features, label_info = build_symbol_dataset(config=config, paper=paper, symbol=symbol)
             result = trainer.train(dataset, features=features, target_col="label")
@@ -284,8 +333,35 @@ def train_once(
                 **result.metrics,
             }
             best_params_by_symbol[symbol] = result.best_params
+            _emit_progress(
+                status="running",
+                phase="training",
+                current_symbol=symbol,
+                current_index=index,
+                symbols_requested=len(target_symbols_all),
+                symbols_queued=queue_count,
+                symbols_completed=index,
+                symbols_trained=len(metrics_by_symbol),
+                symbols_errors=len(skipped_errors),
+                symbols_skipped_up_to_date=len(skipped_up_to_date),
+                progress_pct=(float(index) / float(queue_count) * 100.0) if queue_count > 0 else 100.0,
+            )
         except Exception as exc:
             skipped_errors[symbol] = str(exc)
+            _emit_progress(
+                status="running",
+                phase="training",
+                current_symbol=symbol,
+                current_index=index,
+                symbols_requested=len(target_symbols_all),
+                symbols_queued=queue_count,
+                symbols_completed=index,
+                symbols_trained=len(metrics_by_symbol),
+                symbols_errors=len(skipped_errors),
+                symbols_skipped_up_to_date=len(skipped_up_to_date),
+                progress_pct=(float(index) / float(queue_count) * 100.0) if queue_count > 0 else 100.0,
+                last_error=f"{symbol}: {exc}",
+            )
 
     aggregate = {
         "symbols_requested": len(target_symbols_all),
@@ -294,6 +370,20 @@ def train_once(
         "symbols_skipped_up_to_date": len(skipped_up_to_date),
         "symbols_skipped_errors": len(skipped_errors),
     }
+
+    _emit_progress(
+        status="completed",
+        phase="done",
+        current_symbol=None,
+        current_index=queue_count,
+        symbols_requested=len(target_symbols_all),
+        symbols_queued=queue_count,
+        symbols_completed=queue_count,
+        symbols_trained=len(metrics_by_symbol),
+        symbols_errors=len(skipped_errors),
+        symbols_skipped_up_to_date=len(skipped_up_to_date),
+        progress_pct=100.0,
+    )
 
     return {
         "saved_models": saved_paths,
