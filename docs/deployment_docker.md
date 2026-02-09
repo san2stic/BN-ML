@@ -23,6 +23,17 @@ Ports exposés:
 docker compose build
 ```
 
+## CI Build & Publish (GHCR)
+Workflow: `.github/workflows/publish-docker-ghcr.yml`
+
+Publication automatique vers:
+- `ghcr.io/<owner>/bn-ml-trading-bot:latest` (push sur `main`)
+- `ghcr.io/<owner>/bn-ml-trading-bot:vX.Y.Z` (tag/release)
+- `ghcr.io/<owner>/bn-ml-trading-bot:sha-...` (tag commit)
+
+Validation CI:
+- en pull request, l’image est buildée (sans push)
+
 ## Start Paper Stack
 ```bash
 docker compose --profile paper up -d bot-paper dashboard api prometheus grafana
@@ -85,4 +96,3 @@ docker compose down -v
 - Grafana sans datasource:
   - redémarrer `grafana` après `prometheus`
   - vérifier les mounts `monitoring/grafana/provisioning/*`
-
