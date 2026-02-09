@@ -4,16 +4,20 @@ Objectif: publier automatiquement `bn-ml-trading-bot` sur PyPI à chaque release
 
 Workflow utilisé: `.github/workflows/publish-pypi.yml` (job `publish`).
 
-## 1) Préparer le projet PyPI
+## 1) Préparer PyPI
 
 1. Créer un compte sur https://pypi.org et activer la 2FA.
-2. Créer le projet `bn-ml-trading-bot` (ou faire un premier publish manuel si nécessaire).
+2. Si le projet `bn-ml-trading-bot` n'existe pas encore:
+   - aller dans `Your account` -> `Publishing`
+   - créer un `pending publisher` pour ce nom de projet
+   - cela permet un premier publish sans token API
 
 ## 2) Configurer Trusted Publisher sur PyPI
 
-Dans le projet PyPI:
+Dans PyPI (`Your account` -> `Publishing` ou dans le projet existant):
 - `Publishing` -> `Add a new pending publisher`
 - Renseigner:
+  - `PyPI project name`: `bn-ml-trading-bot`
   - `Owner`: `san2stic`
   - `Repository name`: `BN-ML`
   - `Workflow name`: `Publish PyPI`
