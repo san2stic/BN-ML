@@ -53,6 +53,12 @@ Universe dynamique:
 - `universe.train_missing_only: true` pour n'entraîner que les modèles manquants/anciens
 - `universe.model_max_age_hours: 24` seuil d'ancienneté modèle avant retrain
 
+Mode liste utilisateur (trader uniquement des paires choisies):
+- `universe.user_selected_only: true` active le mode restreint
+- `universe.user_selected_pairs: [BTC/USDC, ETH/USDC, ...]` liste prioritaire des paires autorisées
+- fallback compatibilité: si `user_selected_pairs` est vide, le bot utilise `universe.pairs`
+- en mode restreint, l'univers dynamique est ignoré pour le scan et l'entraînement
+
 Auto-retrain en fond (thread séparé):
 - `model.auto_retrain_enabled: true` active le worker d'entraînement asynchrone
 - `model.retrain_check_interval_sec: 30` fréquence de vérification (`x`) des conditions de retrain

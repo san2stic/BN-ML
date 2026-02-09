@@ -13,6 +13,8 @@ data:
   paper_market_data_mode: live
 
 universe:
+  user_selected_only: false
+  user_selected_pairs: []
   dynamic_base_quote_pairs: true
   dynamic_refresh_sec: 900
   pairs:

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from bn_ml.config import load_config
-from bn_ml.symbols import symbol_to_model_key
+from bn_ml.symbols import normalize_symbols, symbol_to_model_key
 from data_manager.data_cleaner import DataCleaner
 from data_manager.features_engineer import FeatureEngineer
 from data_manager.fetch_data import BinanceDataManager
@@ -114,10 +114,13 @@ def build_symbol_dataset(config: dict, paper: bool, symbol: str) -> tuple[pd.Dat
 
 def resolve_training_symbols(config: dict, paper: bool, symbols: list[str] | None = None) -> list[str]:
     if symbols:
-        return symbols
+        return normalize_symbols(symbols)
 
     universe_cfg = config.get("universe", {})
-    configured = list(universe_cfg.get("pairs", []))
+    configured = normalize_symbols(universe_cfg.get("pairs", []))
+    user_selected = normalize_symbols(universe_cfg.get("user_selected_pairs", []))
+    if bool(universe_cfg.get("user_selected_only", False)):
+        return user_selected or configured
 
     dynamic_enabled = bool(universe_cfg.get("dynamic_base_quote_pairs", False))
     train_dynamic = bool(universe_cfg.get("train_dynamic_pairs", dynamic_enabled))
@@ -134,7 +137,7 @@ def resolve_training_symbols(config: dict, paper: bool, symbols: list[str] | Non
         min_quote_volume_usdt=min_volume,
         max_pairs=max_pairs,
     )
-    return discovered or configured
+    return normalize_symbols(discovered) or configured
 
 
 def _parse_trained_at(raw: Any) -> datetime | None:

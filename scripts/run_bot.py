@@ -19,6 +19,7 @@ from bn_ml.env import load_env_file
 from bn_ml.exchange import call_with_retry
 from bn_ml.backup import RuntimeBackupManager
 from bn_ml.state_store import StateStore
+from bn_ml.symbols import normalize_symbols
 from data_manager.data_cleaner import DataCleaner
 from data_manager.features_engineer import FeatureEngineer
 from data_manager.fetch_data import BinanceDataManager
@@ -180,7 +181,9 @@ class TradingRuntime:
         configured = str(self.config.get("base_quote", "")).strip().upper()
         if configured:
             return configured
-        pairs = self.config.get("universe", {}).get("pairs", [])
+        universe_cfg = self.config.get("universe", {})
+        user_selected = normalize_symbols(universe_cfg.get("user_selected_pairs", []))
+        pairs = user_selected or normalize_symbols(universe_cfg.get("pairs", []))
         if pairs:
             try:
                 return str(pairs[0]).split("/")[-1].upper()
@@ -308,7 +311,18 @@ class TradingRuntime:
 
     def _resolve_pairs_for_scan(self, force_refresh: bool = False) -> list[str]:
         universe_cfg = self.config.get("universe", {})
-        configured_pairs = list(universe_cfg.get("pairs", []))
+        configured_pairs = normalize_symbols(universe_cfg.get("pairs", []))
+        user_selected_pairs = normalize_symbols(universe_cfg.get("user_selected_pairs", []))
+        user_selected_only = bool(universe_cfg.get("user_selected_only", False))
+
+        if user_selected_only:
+            selected = user_selected_pairs or configured_pairs
+            if not selected:
+                self.logger.warning(
+                    "universe.user_selected_only is enabled but no pairs are configured "
+                    "(expected universe.user_selected_pairs or universe.pairs)."
+                )
+            return selected
 
         dynamic_enabled = bool(universe_cfg.get("dynamic_base_quote_pairs", False))
         if not dynamic_enabled:
@@ -328,6 +342,7 @@ class TradingRuntime:
             min_quote_volume_usdt=min_volume,
             max_pairs=max_pairs,
         )
+        discovered = normalize_symbols(discovered)
         if discovered:
             self._universe_cache_pairs = discovered
             self._universe_cache_ts = now_ts
@@ -337,9 +352,15 @@ class TradingRuntime:
 
     def _resolve_pairs_for_training(self) -> list[str]:
         universe_cfg = self.config.get("universe", {})
+        configured_pairs = normalize_symbols(universe_cfg.get("pairs", []))
+        user_selected_pairs = normalize_symbols(universe_cfg.get("user_selected_pairs", []))
+        user_selected_only = bool(universe_cfg.get("user_selected_only", False))
+
+        if user_selected_only:
+            return user_selected_pairs or configured_pairs
+
         dynamic_enabled = bool(universe_cfg.get("dynamic_base_quote_pairs", False))
         train_dynamic = bool(universe_cfg.get("train_dynamic_pairs", dynamic_enabled))
-        configured_pairs = list(universe_cfg.get("pairs", []))
 
         if not train_dynamic:
             return configured_pairs
