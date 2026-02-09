@@ -56,6 +56,14 @@ Auto-retrain en fond (thread séparé):
 - `model.auto_train_missing_batch_size: 5` limite les auto-trains manquants par batch
 - `model.auto_train_missing_disable_hpo: true` accélère l'auto-train manquant (désactive HPO sur ce flux)
 
+Analyse multi-timeframe (MTF):
+- `model.multi_timeframe.enabled: true` active la fusion multi-timeframe
+- `model.multi_timeframe.base_timeframe: 15m` timeframe principal
+- `model.multi_timeframe.timeframes: [1h, 4h, 1d]` timeframes supérieurs fusionnés
+- `model.multi_timeframe.feature_columns` features HTF à projeter sur le timeframe de base
+- `model.multi_timeframe.min_candles_per_timeframe` / `max_candles_per_timeframe` / `extra_candles_buffer` pour contrôler la profondeur de chaque HTF
+- les signaux de confluence sont ajoutés automatiquement (`mtf_trend_consensus`, `mtf_macd_consensus`, `mtf_confluence_score`, etc.)
+
 ## 3) Commandes principales
 
 Entraîner les modèles par symbole:
@@ -148,6 +156,7 @@ Chaque symbole a son bundle dédié:
 
 Le trainer applique:
 - sélection de features
+- fusion de features multi-timeframe alignées temporellement (sans look-ahead)
 - validation temporelle
 - HPO walk-forward orienté rentabilité nette (Sharpe/Sortino/Accuracy + rendement net + pénalité drawdown/turnover)
 - accélération XGBoost selon le hardware
@@ -165,6 +174,8 @@ Réglages HPO:
 - `model.execution.cost_multiplier`
 - `model.labeling.*`
 - `model.ensemble.*`
+- `model.train_ohlcv_limit`
+- `scanner.ohlcv_limit`
 
 ## 6) Hardware (Mac M1 + Ubuntu RTX 2070 Super)
 

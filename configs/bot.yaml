@@ -30,6 +30,7 @@ universe:
 scanner:
   scan_interval_sec: 300
   top_n: 10
+  ohlcv_limit: 500
   min_global_score: 60
   min_ml_confidence: 65
   spread_max_pct: 0.15
@@ -48,6 +49,28 @@ model:
   feature_limit: 50
   sequence_length: 64
   random_state: 42
+  train_ohlcv_limit: 1800
+  backtest_ohlcv_limit: 2000
+  multi_timeframe:
+    enabled: true
+    base_timeframe: 15m
+    timeframes: [1h, 4h, 1d]
+    feature_columns:
+      - ema_9
+      - ema_21
+      - ema_50
+      - macd_hist
+      - rsi_14
+      - atr_ratio
+      - bb_percent_b
+      - volume_ratio_20
+      - roc_1h
+      - roc_4h
+      - dist_high_24h
+      - dist_low_24h
+    min_candles_per_timeframe: 120
+    max_candles_per_timeframe: 360
+    extra_candles_buffer: 48
   acceleration:
     mode: auto
     cpu_n_jobs: -1
@@ -114,6 +137,7 @@ risk:
   max_position_drawdown_pct: 0.03
   max_correlation: 0.70
   stop_loss_atr_mult: 1.5
+  atr_ohlcv_limit: 150
   trailing_activation_pct: 0.02
   trailing_atr_mult: 1.0
   time_stop_hours: 48

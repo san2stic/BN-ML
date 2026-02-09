@@ -6,6 +6,7 @@ from bn_ml.types import Opportunity
 from data_manager.data_cleaner import DataCleaner
 from data_manager.features_engineer import FeatureEngineer
 from data_manager.fetch_data import BinanceDataManager
+from data_manager.multi_timeframe import MultiTimeframeFeatureBuilder
 from ml_engine.predictor import MLEnsemblePredictor
 from scanner.scorer import OpportunityScorer
 
@@ -17,7 +18,14 @@ class MultiPairScanner:
         self.predictor = predictor
         self.cleaner = DataCleaner()
         self.features = FeatureEngineer()
+        self.mtf_features = MultiTimeframeFeatureBuilder(
+            config=config,
+            data_manager=data_manager,
+            cleaner=self.cleaner,
+            feature_engineer=self.features,
+        )
         self.scorer = OpportunityScorer()
+        self.ohlcv_limit = int(config.get("scanner", {}).get("ohlcv_limit", 500))
 
     def scan(self, pairs: Iterable[str]) -> list[Opportunity]:
         selected, _ = self.scan_details(pairs)
@@ -33,9 +41,7 @@ class MultiPairScanner:
                 if quote_volume < min_quote_volume:
                     continue
 
-                frame = self.data_manager.fetch_ohlcv(symbol=symbol, timeframe="15m", limit=500)
-                frame = self.cleaner.clean_ohlcv(frame)
-                frame = self.features.build(frame)
+                frame = self.mtf_features.build(symbol=symbol, limit=self.ohlcv_limit)
                 feature_cols = self.features.feature_columns(frame)
 
                 signal = self.predictor.predict(symbol=symbol, frame=frame, feature_columns=feature_cols)

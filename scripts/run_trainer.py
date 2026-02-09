@@ -14,6 +14,7 @@ from bn_ml.symbols import symbol_to_model_key
 from data_manager.data_cleaner import DataCleaner
 from data_manager.features_engineer import FeatureEngineer
 from data_manager.fetch_data import BinanceDataManager
+from data_manager.multi_timeframe import MultiTimeframeFeatureBuilder
 from ml_engine.trainer import EnsembleTrainer
 
 
@@ -82,14 +83,19 @@ def _label_edge_profile(config: dict, frame: pd.DataFrame) -> tuple[pd.Series, i
     return edge, horizon, info
 
 
-def build_symbol_dataset(config: dict, paper: bool, symbol: str) -> tuple[pd.DataFrame, list[str], dict[str, float]]:
+def build_symbol_dataset(config: dict, paper: bool, symbol: str) -> tuple[pd.DataFrame, list[str], dict[str, Any]]:
     cleaner = DataCleaner()
     feat = FeatureEngineer()
     data = BinanceDataManager(config=config, paper=paper)
+    mtf_builder = MultiTimeframeFeatureBuilder(
+        config=config,
+        data_manager=data,
+        cleaner=cleaner,
+        feature_engineer=feat,
+    )
 
-    ohlcv = data.fetch_ohlcv(symbol=symbol, timeframe="15m", limit=1800)
-    ohlcv = cleaner.clean_ohlcv(ohlcv)
-    frame = feat.build(ohlcv)
+    train_limit = int(config.get("model", {}).get("train_ohlcv_limit", 1800))
+    frame = mtf_builder.build(symbol=symbol, limit=train_limit)
     frame["symbol"] = symbol
 
     edge, horizon, label_info = _label_edge_profile(config=config, frame=frame)
@@ -102,6 +108,7 @@ def build_symbol_dataset(config: dict, paper: bool, symbol: str) -> tuple[pd.Dat
     feature_cols = feat.feature_columns(ds)
     label_info["effective_edge_mean_pct"] = float(ds["label_edge"].mean()) if not ds.empty else 0.0
     label_info["effective_edge_median_pct"] = float(ds["label_edge"].median()) if not ds.empty else 0.0
+    label_info["multi_timeframe"] = mtf_builder.describe()
     return ds, feature_cols, label_info
 
 

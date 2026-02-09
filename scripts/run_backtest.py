@@ -9,6 +9,7 @@ from bn_ml.config import load_config
 from data_manager.data_cleaner import DataCleaner
 from data_manager.features_engineer import FeatureEngineer
 from data_manager.fetch_data import BinanceDataManager
+from data_manager.multi_timeframe import MultiTimeframeFeatureBuilder
 from ml_engine.validator import BacktestValidator
 
 
@@ -28,10 +29,15 @@ def main() -> None:
     manager = BinanceDataManager(config=config, paper=paper)
     cleaner = DataCleaner()
     feat = FeatureEngineer()
+    mtf_builder = MultiTimeframeFeatureBuilder(
+        config=config,
+        data_manager=manager,
+        cleaner=cleaner,
+        feature_engineer=feat,
+    )
 
-    df = manager.fetch_ohlcv(symbol=symbol, timeframe="15m", limit=2000)
-    df = cleaner.clean_ohlcv(df)
-    df = feat.build(df)
+    backtest_limit = int(config.get("model", {}).get("backtest_ohlcv_limit", 2000))
+    df = mtf_builder.build(symbol=symbol, limit=backtest_limit)
 
     df["signal"] = 0
     df.loc[(df["rsi_14"] < 35) & (df["macd_hist"] > 0), "signal"] = 1

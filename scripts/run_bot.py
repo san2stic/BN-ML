@@ -148,6 +148,9 @@ class TradingRuntime:
         self.scanner = MultiPairScanner(config=config, data_manager=self.data_manager, predictor=self.predictor)
         self.cleaner = DataCleaner()
         self.features = FeatureEngineer()
+        mtf_cfg = config.get("model", {}).get("multi_timeframe", {})
+        self.base_timeframe = str(mtf_cfg.get("base_timeframe", "15m")).strip().lower() or "15m"
+        self.atr_ohlcv_limit = int(config.get("risk", {}).get("atr_ohlcv_limit", 150))
 
         self.risk_manager = RiskManager(config)
         self.exit_manager = ExitManager(config)
@@ -561,7 +564,7 @@ class TradingRuntime:
             self.account_state["current_win_rate_24h"] = float(stats.get("win_rate", 0.0))
 
     def _estimate_atr_value(self, symbol: str, price: float) -> float:
-        frame = self.data_manager.fetch_ohlcv(symbol=symbol, timeframe="15m", limit=150)
+        frame = self.data_manager.fetch_ohlcv(symbol=symbol, timeframe=self.base_timeframe, limit=self.atr_ohlcv_limit)
         frame = self.cleaner.clean_ohlcv(frame)
         frame = self.features.build(frame)
         atr_ratio = float(frame.iloc[-1].get("atr_ratio", 0.01))
