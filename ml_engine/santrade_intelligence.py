@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any, Iterable
+import uuid
 
 import joblib
 import numpy as np
@@ -193,6 +195,7 @@ class SanTradeIntelligence:
         self._model_fitted = False
         self._model_samples = 0
         self._updates_since_persist = 0
+        self._state_dirty = False
 
         self._previous_vector: np.ndarray | None = None
         self._previous_benchmark_price: float = 0.0
@@ -290,6 +293,7 @@ class SanTradeIntelligence:
 
         self._previous_vector = vector
         self._previous_benchmark_price = benchmark_price
+        self._state_dirty = True
 
         snapshot = self._build_snapshot(
             generated_at=timestamp,
@@ -321,8 +325,8 @@ class SanTradeIntelligence:
 
         self._updates_since_persist += 1
         if self._updates_since_persist >= self.persist_every_updates:
-            self._persist_state()
-            self._updates_since_persist = 0
+            if self._persist_state():
+                self._updates_since_persist = 0
 
         return snapshot
 
@@ -659,7 +663,7 @@ class SanTradeIntelligence:
                     pass
         return 0.0
 
-    def _persist_state(self) -> None:
+    def _persist_state(self) -> bool:
         payload = {
             "profile": self.profile,
             "scaler": self._scaler,
@@ -674,10 +678,25 @@ class SanTradeIntelligence:
             "directional_streak": self._directional_streak,
             "vector_dim": self._vector_dim,
         }
+        tmp_path = self.state_path.parent / f".{self.state_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         try:
-            joblib.dump(payload, self.state_path)
+            joblib.dump(payload, tmp_path)
+            tmp_path.replace(self.state_path)
+            self._state_dirty = False
+            return True
         except Exception as exc:
             self._log_warning("SanTradeIntelligence state persist failed: %s", exc)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False
+
+    def flush_state(self) -> None:
+        if not self._state_dirty:
+            return
+        if self._persist_state():
+            self._updates_since_persist = 0
 
     def _load_state(self) -> None:
         if not self.state_path.exists():
@@ -736,6 +755,7 @@ class SanTradeIntelligence:
             self._directional_streak = max(0, int(payload.get("directional_streak", 0)))
         except (TypeError, ValueError):
             self._directional_streak = 0
+        self._state_dirty = False
 
     def _normalize_score_weights(self) -> None:
         weights = [self.weight_breadth, self.weight_momentum, self.weight_ml, self.weight_global]

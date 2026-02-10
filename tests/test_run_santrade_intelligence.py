@@ -78,3 +78,48 @@ def test_run_loop_respects_max_cycles(monkeypatch) -> None:
     assert code == 0
     assert runtime.cycles == 2
     assert sleeps == [22.0]
+
+
+def test_runtime_shutdown_flushes_state() -> None:
+    class _DummyMarketIntelligence:
+        def __init__(self) -> None:
+            self.flush_calls = 0
+
+        def flush_state(self) -> None:
+            self.flush_calls += 1
+
+    class _DummyLogger:
+        def warning(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            return None
+
+    runtime = object.__new__(run_santrade_intelligence.SanTradeIntelligenceRuntime)
+    runtime.market_intelligence = _DummyMarketIntelligence()
+    runtime.logger = _DummyLogger()
+
+    runtime.shutdown()
+
+    assert runtime.market_intelligence.flush_calls == 1
+
+
+def test_runtime_shutdown_handles_flush_errors() -> None:
+    class _FailingMarketIntelligence:
+        def flush_state(self) -> None:
+            raise RuntimeError("flush failed")
+
+    class _DummyLogger:
+        def __init__(self) -> None:
+            self.warning_messages: list[str] = []
+
+        def warning(self, msg: str, *args) -> None:  # noqa: ANN002
+            if args:
+                self.warning_messages.append(msg % args)
+            else:
+                self.warning_messages.append(msg)
+
+    runtime = object.__new__(run_santrade_intelligence.SanTradeIntelligenceRuntime)
+    runtime.market_intelligence = _FailingMarketIntelligence()
+    runtime.logger = _DummyLogger()
+
+    runtime.shutdown()
+
+    assert runtime.logger.warning_messages

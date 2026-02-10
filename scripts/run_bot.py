@@ -525,6 +525,10 @@ class TradingRuntime:
         if self.retrain_worker is not None:
             self.retrain_worker.stop(timeout_sec=30.0)
             self.retrain_worker = None
+        try:
+            self.market_intelligence.flush_state()
+        except Exception as exc:
+            self.logger.warning("SanTradeIntelligence shutdown flush failed: %s", exc)
         self.realtime_prices.stop()
 
     def _sync_realtime_price_stream(self, force: bool = False) -> None:

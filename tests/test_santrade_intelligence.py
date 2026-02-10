@@ -139,6 +139,39 @@ def test_online_training_accumulates_samples_and_sets_model_ready(tmp_path: Path
     assert state_path.exists()
 
 
+def test_flush_state_persists_and_recovers_when_interval_not_reached(tmp_path: Path) -> None:
+    state_path = tmp_path / "sti_flush.joblib"
+    config = _config(state_path, persist_every_updates=99)
+    engine = SanTradeIntelligence(
+        config=config,
+        data_manager=_DummyDataManager([100.0, 100.2, 99.9]),
+    )
+
+    engine.update(
+        pairs=[opp.symbol for opp in _bullish_opportunities()],
+        opportunities=_bullish_opportunities(),
+        quote_asset="USDT",
+    )
+    engine.update(
+        pairs=[opp.symbol for opp in _risk_off_opportunities()],
+        opportunities=_risk_off_opportunities(),
+        quote_asset="USDT",
+    )
+
+    assert not state_path.exists()
+    assert engine._model_samples > 0
+
+    engine.flush_state()
+    assert state_path.exists()
+
+    restored = SanTradeIntelligence(
+        config=config,
+        data_manager=_DummyDataManager([100.0]),
+    )
+    assert restored._model_samples == engine._model_samples
+    assert restored._model_fitted == engine._model_fitted
+
+
 def test_aggressive_profile_is_more_directional_than_defensive_profile(tmp_path: Path) -> None:
     opportunities = _balanced_opportunities()
     prices = [100.0, 100.05, 100.1]
