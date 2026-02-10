@@ -44,7 +44,7 @@ services:
 
   model-sync-runpod:
     <<: *bnml-common
-    profiles: ["paper", "live"]
+    profiles: ["runpod"]
     command: ["python", "-m", "scripts.model_sync", "daemon", "--role", "runpod_client", "--models-dir", "models"]
 
   trainer:

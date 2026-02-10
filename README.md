@@ -423,10 +423,10 @@ L'image Docker utilise un CMD par défaut train-only (`scripts.runpod_train_only
 
 ```bash
 # stack paper avec sync RunPod
-docker compose --profile paper up -d bot-paper model-sync-runpod dashboard api prometheus grafana
+docker compose --profile paper --profile runpod up -d bot-paper model-sync-runpod dashboard api prometheus grafana
 
 # stack live avec sync RunPod
-docker compose --profile live up -d bot-live model-sync-runpod dashboard api prometheus grafana
+docker compose --profile live --profile runpod up -d bot-live model-sync-runpod dashboard api prometheus grafana
 ```
 
 Dans `.env`, définir `RUNPOD_API_KEY=...`.

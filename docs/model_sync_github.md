@@ -90,8 +90,7 @@ python3 -m scripts.model_sync daemon --role runpod_client --config configs/bot.y
 `docker-compose.yml` inclut le service `model-sync-runpod`:
 
 ```bash
-docker compose --profile paper up -d bot-paper model-sync-runpod dashboard api prometheus grafana
-docker compose --profile live up -d bot-live model-sync-runpod dashboard api prometheus grafana
+docker compose --profile runpod up -d model-sync-runpod
 ```
 
 Image RunPod recommandée:

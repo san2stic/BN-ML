@@ -39,18 +39,23 @@ Validation CI:
 
 ## Start Paper Stack
 ```bash
-docker compose --profile paper up -d bot-paper model-sync-runpod dashboard api prometheus grafana
+docker compose --profile paper up -d bot-paper trainer-auto dashboard api prometheus grafana
 ```
 
 ## Start Live Stack
 ```bash
-docker compose --profile live up -d bot-live model-sync-runpod dashboard api prometheus grafana
+docker compose --profile live up -d bot-live trainer-auto dashboard api prometheus grafana
 ```
 
 Important:
 - `bot-paper` / `bot-live` démarrent avec `--disable-retrain`.
-- en mode RunPod, la mise à jour des modèles est assurée par `model-sync-runpod` (daemon quotidien `--role runpod_client`).
-- si tu n'utilises pas RunPod, démarre `trainer-auto` à la place de `model-sync-runpod`.
+- en local, la mise à jour des modèles est assurée par `trainer-auto`.
+- en mode RunPod, activer le profil `runpod` et démarrer `model-sync-runpod` (daemon quotidien `--role runpod_client`).
+
+## Start RunPod Model Sync (optional)
+```bash
+docker compose --profile runpod up -d model-sync-runpod
+```
 
 ## URLs
 - Site public/API: `http://localhost:8000`
@@ -104,7 +109,7 @@ docker compose down -v
 - `PermissionError: [Errno 13] ... artifacts/...`:
   - relancer la stack (le service `volume-init` corrige les droits):
     - `docker compose down`
-    - `docker compose --profile paper up -d bot-paper model-sync-runpod dashboard api prometheus grafana`
+    - `docker compose --profile paper up -d bot-paper trainer-auto dashboard api prometheus grafana`
   - si besoin, correction manuelle one-shot:
     - `docker compose run --rm --user root bot-paper sh -lc "mkdir -p /app/artifacts /app/models && chown -R 10001:10001 /app/artifacts /app/models"`
 - Dashboard vide:
