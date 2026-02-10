@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +69,12 @@ class SanTradeIntelligenceRuntime:
         self.store = StateStore(db_path=db_path)
         self._universe_cache_pairs: list[str] = []
         self._universe_cache_ts: float = 0.0
+
+    def shutdown(self) -> None:
+        try:
+            self.market_intelligence.flush_state()
+        except Exception as exc:
+            self.logger.warning("SanTradeIntelligence shutdown flush failed: %s", exc)
 
     def _quote_asset(self) -> str:
         configured = str(self.config.get("base_quote", "")).strip().upper()
@@ -217,17 +224,33 @@ def main() -> None:
         paper = config.get("environment", "paper") == "paper"
 
     runtime = SanTradeIntelligenceRuntime(config=config, paper=paper)
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
 
-    if args.once:
-        runtime.run_cycle()
-        return
+    def _handle_sigterm(signum, frame):  # type: ignore[no-untyped-def]
+        del signum, frame
+        raise KeyboardInterrupt
 
-    interval_seconds = resolve_interval_seconds(config=config, override_seconds=args.interval_seconds)
-    exit_code = run_loop(
-        runtime=runtime,
-        interval_seconds=interval_seconds,
-        max_cycles=0,
-    )
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    exit_code = 0
+
+    try:
+        if args.once:
+            runtime.run_cycle()
+            return
+
+        interval_seconds = resolve_interval_seconds(config=config, override_seconds=args.interval_seconds)
+        exit_code = run_loop(
+            runtime=runtime,
+            interval_seconds=interval_seconds,
+            max_cycles=0,
+        )
+    except KeyboardInterrupt:
+        runtime.logger.info("SanTradeIntelligence shutdown requested by signal/user.")
+        exit_code = 130
+    finally:
+        runtime.shutdown()
+        signal.signal(signal.SIGTERM, previous_sigterm)
+
     if exit_code != 0:
         raise SystemExit(exit_code)
 

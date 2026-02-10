@@ -106,6 +106,10 @@ Le compose persiste automatiquement:
 - `models/` via volume `bnml_models`
 - données Prometheus/Grafana via `prometheus_data` et `grafana_data`
 
+`santrade-intelligence` persiste désormais son état online à chaque cycle (`persist_every_updates: 1`)
+et force un flush au shutdown (`docker stop`, `compose down`) pour reprendre après redémarrage
+avec les derniers paramètres appris.
+
 Au démarrage, le service `volume-init` applique automatiquement `chown 10001:10001` sur `artifacts/` et `models/` pour éviter les erreurs `PermissionError` quand le bot tourne en `appuser`.
 
 ## Monitoring metrics (Prometheus)

@@ -174,7 +174,7 @@ model:
     runtime_interval_sec: 300
     benchmark_symbol: ""
     online_alpha: 0.0005
-    persist_every_updates: 5
+    persist_every_updates: 1
     state_path: artifacts/state/santrade_intelligence.joblib
     profiles:
       aggressive:
