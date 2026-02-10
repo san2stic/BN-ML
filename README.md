@@ -221,6 +221,13 @@ Live stack complète:
 docker compose --profile live up -d bot-live trainer-auto dashboard api prometheus grafana
 ```
 
+Exposer le dashboard via Cloudflare Tunnel (URL publique dans les logs):
+
+```bash
+docker compose --profile paper --profile tunnel up -d bot-paper trainer-auto dashboard api prometheus grafana cloudflared
+docker compose logs -f cloudflared
+```
+
 Note Docker: `bot-paper`/`bot-live` sont lancés avec `--disable-retrain`; le retrain est délégué au conteneur `trainer-auto`.
 
 Endpoints:

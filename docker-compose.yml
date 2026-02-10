@@ -105,6 +105,14 @@ services:
       - "3000:3000"
     restart: unless-stopped
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    depends_on:
+      - dashboard
+    command: ["tunnel", "--no-autoupdate", "--url", "${CLOUDFLARED_URL:-http://dashboard:8501}"]
+    restart: unless-stopped
+
   report:
     <<: *bnml-common
     profiles: ["ops"]

@@ -11,6 +11,7 @@
 - `trainer-auto` (retrain périodique des modèles, conteneur dédié)
 - `model-sync-runpod` (trigger endpoint RunPod + pull modèles quotidien)
 - `dashboard` (Streamlit Trader Terminal)
+- `cloudflared` (tunnel Cloudflare vers le Web UI, profil optionnel `tunnel`)
 - `api` (site public + API temps réel + `/metrics`)
 - `prometheus` (scrape monitoring)
 - `grafana` (visualisation)
@@ -47,6 +48,25 @@ docker compose --profile paper up -d bot-paper trainer-auto dashboard api promet
 docker compose --profile live up -d bot-live trainer-auto dashboard api prometheus grafana
 ```
 
+## Exposer le Web UI via Cloudflare Tunnel (optional)
+Par défaut, `cloudflared` publie le dashboard (`http://dashboard:8501`).
+
+```bash
+docker compose --profile paper --profile tunnel up -d bot-paper trainer-auto dashboard api prometheus grafana cloudflared
+```
+
+Pour cibler un autre service local (ex: API), définir dans `.env`:
+
+```bash
+CLOUDFLARED_URL=http://api:8000
+```
+
+Récupérer l'URL publique générée:
+
+```bash
+docker compose logs -f cloudflared
+```
+
 Important:
 - `bot-paper` / `bot-live` démarrent avec `--disable-retrain`.
 - en local, la mise à jour des modèles est assurée par `trainer-auto`.
@@ -64,6 +84,7 @@ docker compose --profile runpod up -d model-sync-runpod
 - Dashboard trading: `http://localhost:8501`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000`
+- Tunnel Cloudflare: URL affichée dans les logs `cloudflared` (domaine `trycloudflare.com`)
 
 ## Ops services (on demand)
 Trainer:
