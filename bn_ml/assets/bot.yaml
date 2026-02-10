@@ -40,6 +40,17 @@ scanner:
   min_ml_confidence: 65
   spread_max_pct: 0.15
   orderbook_depth_min_usdt: 50000
+  dynamic_pair_filters:
+    enabled: true
+    major_bases: [BTC, ETH, BNB, SOL, XRP, ADA, DOGE]
+    spread_factor_major: 1.10
+    spread_factor_alt: 0.95
+    depth_factor_major: 0.90
+    depth_factor_alt: 1.10
+    correlation_bonus_major: 0.05
+    correlation_penalty_alt: -0.05
+    correlation_limit_benchmark: 1.0
+    by_symbol: {}
 
 model:
   lookback_days: 60

@@ -31,16 +31,23 @@ def _config() -> dict:
     }
 
 
-def _opportunity(action: str = "BUY", confidence: float = 70.0, correlation: float = 0.5) -> Opportunity:
+def _opportunity(
+    action: str = "BUY",
+    confidence: float = 70.0,
+    correlation: float = 0.5,
+    symbol: str = "ETH/USDT",
+    spread_pct: float = 0.05,
+    depth_usdt: float = 120000,
+) -> Opportunity:
     return Opportunity(
-        symbol="BTC/USDT",
+        symbol=symbol,
         ml_score=70,
         technical_score=65,
         momentum_score=60,
         global_score=68,
-        signal=Signal(symbol="BTC/USDT", action=action, confidence=confidence, strength=70),
-        spread_pct=0.05,
-        orderbook_depth_usdt=120000,
+        signal=Signal(symbol=symbol, action=action, confidence=confidence, strength=70),
+        spread_pct=spread_pct,
+        orderbook_depth_usdt=depth_usdt,
         atr_ratio=0.01,
         expected_net_profit_pct=0.45,
         correlation_with_btc=correlation,
@@ -117,3 +124,78 @@ def test_blocks_when_market_drift_breaker_active() -> None:
     allowed, reasons, _ = rm.can_open_position(_opportunity(), [], state)
     assert allowed is False
     assert any("drift circuit breaker active" in reason.lower() for reason in reasons)
+
+
+def test_dynamic_pair_filter_relaxes_major_pair_limits() -> None:
+    cfg = _config()
+    cfg["scanner"]["dynamic_pair_filters"] = {
+        "enabled": True,
+        "major_bases": ["ETH"],
+        "spread_factor_major": 1.20,
+        "depth_factor_major": 0.80,
+        "correlation_bonus_major": 0.15,
+    }
+    rm = RiskManager(cfg)
+    opp = _opportunity(symbol="ETH/USDT", spread_pct=0.17, depth_usdt=42_000, correlation=0.84)
+
+    allowed, reasons, _ = rm.can_open_position(opp, [], _state())
+
+    assert allowed is True
+    assert reasons == []
+
+
+def test_dynamic_pair_filter_tightens_alt_pair_limits() -> None:
+    cfg = _config()
+    cfg["scanner"]["dynamic_pair_filters"] = {
+        "enabled": True,
+        "major_bases": ["ETH"],
+        "spread_factor_alt": 0.80,
+        "depth_factor_alt": 1.20,
+        "correlation_penalty_alt": -0.10,
+    }
+    rm = RiskManager(cfg)
+    opp = _opportunity(symbol="TRX/USDT", spread_pct=0.13, depth_usdt=55_000, correlation=0.65)
+
+    allowed, reasons, _ = rm.can_open_position(opp, [], _state())
+
+    assert allowed is False
+    assert any("Spread too high" in reason for reason in reasons)
+    assert any("Orderbook depth too low" in reason for reason in reasons)
+    assert any("Correlation threshold exceeded" in reason for reason in reasons)
+
+
+def test_dynamic_pair_filter_supports_symbol_override() -> None:
+    cfg = _config()
+    cfg["scanner"]["dynamic_pair_filters"] = {
+        "enabled": True,
+        "by_symbol": {
+            "TRX/USDT": {
+                "spread_max_pct": 0.20,
+                "orderbook_depth_min_usdt": 40_000,
+                "max_correlation": 0.90,
+            }
+        },
+    }
+    rm = RiskManager(cfg)
+    opp = _opportunity(symbol="TRX/USDT", spread_pct=0.18, depth_usdt=45_000, correlation=0.85)
+
+    allowed, reasons, _ = rm.can_open_position(opp, [], _state())
+
+    assert allowed is True
+    assert reasons == []
+
+
+def test_dynamic_pair_filter_benchmark_allows_btc_correlation() -> None:
+    cfg = _config()
+    cfg["scanner"]["dynamic_pair_filters"] = {
+        "enabled": True,
+        "major_bases": ["BTC"],
+        "correlation_limit_benchmark": 1.0,
+    }
+    rm = RiskManager(cfg)
+    opp = _opportunity(symbol="BTC/USDT", correlation=0.98)
+
+    allowed, reasons, _ = rm.can_open_position(opp, [], _state())
+
+    assert allowed is True
+    assert reasons == []

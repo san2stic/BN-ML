@@ -10,6 +10,8 @@ class RiskManager:
         self.config = config
         self.risk_cfg = config.get("risk", {})
         self.scanner_cfg = config.get("scanner", {})
+        dynamic_cfg = self.scanner_cfg.get("dynamic_pair_filters", {})
+        self.dynamic_pair_filters_cfg = dynamic_cfg if isinstance(dynamic_cfg, dict) else {}
 
     @staticmethod
     def _to_float(value: Any, default: float = 0.0) -> float:
@@ -30,6 +32,63 @@ class RiskManager:
         if total_capital > 0:
             return max(0.0, (-realized_usdt / total_capital) * 100.0)
         return max(0.0, -fallback_pnl_pct)
+
+    @staticmethod
+    def _split_symbol(symbol: str) -> tuple[str, str]:
+        parts = str(symbol).upper().split("/", 1)
+        if len(parts) == 2:
+            return parts[0], parts[1]
+        return parts[0], ""
+
+    def _pair_filter_thresholds(self, symbol: str) -> tuple[float, float, float]:
+        spread_limit = float(self.scanner_cfg.get("spread_max_pct", 0.15))
+        depth_limit = float(self.scanner_cfg.get("orderbook_depth_min_usdt", 50_000))
+        correlation_limit = float(self.risk_cfg.get("max_correlation", 0.70))
+
+        cfg = self.dynamic_pair_filters_cfg
+        if not bool(cfg.get("enabled", False)):
+            return spread_limit, depth_limit, correlation_limit
+
+        base_asset, _ = self._split_symbol(symbol)
+        major_bases = {
+            str(x).strip().upper()
+            for x in cfg.get("major_bases", ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE"])
+            if str(x).strip()
+        }
+        is_major = base_asset in major_bases
+
+        if is_major:
+            spread_limit *= self._to_float(cfg.get("spread_factor_major"), 1.10)
+            depth_limit *= self._to_float(cfg.get("depth_factor_major"), 0.90)
+            correlation_limit += self._to_float(cfg.get("correlation_bonus_major"), 0.05)
+        else:
+            spread_limit *= self._to_float(cfg.get("spread_factor_alt"), 0.95)
+            depth_limit *= self._to_float(cfg.get("depth_factor_alt"), 1.10)
+            correlation_limit += self._to_float(cfg.get("correlation_penalty_alt"), -0.05)
+
+        if base_asset == "BTC":
+            correlation_limit = max(correlation_limit, self._to_float(cfg.get("correlation_limit_benchmark"), 1.0))
+
+        by_symbol = cfg.get("by_symbol", {})
+        symbol_key = str(symbol).upper()
+        if isinstance(by_symbol, dict):
+            override = None
+            for key, value in by_symbol.items():
+                if str(key).strip().upper() == symbol_key and isinstance(value, dict):
+                    override = value
+                    break
+            if override:
+                if "spread_max_pct" in override:
+                    spread_limit = self._to_float(override.get("spread_max_pct"), spread_limit)
+                if "orderbook_depth_min_usdt" in override:
+                    depth_limit = self._to_float(override.get("orderbook_depth_min_usdt"), depth_limit)
+                if "max_correlation" in override:
+                    correlation_limit = self._to_float(override.get("max_correlation"), correlation_limit)
+
+        spread_limit = max(0.0, spread_limit)
+        depth_limit = max(0.0, depth_limit)
+        correlation_limit = min(1.0, max(0.0, correlation_limit))
+        return spread_limit, depth_limit, correlation_limit
 
     def risk_budget_snapshot(self, account_state: dict[str, float], size_usdt: float = 0.0) -> dict[str, float]:
         total_capital = max(
@@ -73,6 +132,7 @@ class RiskManager:
         account_state: dict[str, float],
     ) -> tuple[bool, list[str], float]:
         reasons: list[str] = []
+        spread_limit, depth_limit, correlation_limit = self._pair_filter_thresholds(opportunity.symbol)
 
         if opportunity.signal.action != "BUY":
             reasons.append("Signal is not BUY.")
@@ -80,10 +140,10 @@ class RiskManager:
         if opportunity.signal.confidence < float(self.scanner_cfg.get("min_ml_confidence", 65)):
             reasons.append("ML confidence below threshold.")
 
-        if opportunity.spread_pct > float(self.scanner_cfg.get("spread_max_pct", 0.15)):
+        if opportunity.spread_pct > spread_limit:
             reasons.append("Spread too high.")
 
-        if opportunity.orderbook_depth_usdt < float(self.scanner_cfg.get("orderbook_depth_min_usdt", 50_000)):
+        if opportunity.orderbook_depth_usdt < depth_limit:
             reasons.append("Orderbook depth too low.")
 
         if opportunity.expected_net_profit_pct < float(self.risk_cfg.get("min_net_profit_pct", 0.30)):
@@ -111,7 +171,6 @@ class RiskManager:
         ):
             reasons.append("Market drift circuit breaker active.")
 
-        correlation_limit = float(self.risk_cfg.get("max_correlation", 0.70))
         if opportunity.correlation_with_btc > correlation_limit:
             reasons.append("Correlation threshold exceeded.")
 
