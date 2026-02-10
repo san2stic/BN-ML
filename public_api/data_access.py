@@ -37,6 +37,10 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
 def _safe_json(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -203,6 +207,92 @@ def load_santrade_intelligence(db_path: Path) -> dict[str, Any]:
         return payload if isinstance(payload, dict) else {}
     finally:
         conn.close()
+
+
+def market_index_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    market_score = _to_float(payload.get("market_score"), default=0.0)
+    raw_index_value = payload.get("market_score_pct")
+    index_value = _to_float(raw_index_value, default=((market_score + 1.0) * 50.0))
+    signal = _normalize_signal(str(payload.get("signal", "HOLD"))) or "HOLD"
+    return {
+        "generated_at": payload.get("generated_at"),
+        "index_value": _clamp(index_value, 0.0, 100.0),
+        "market_score": _clamp(market_score, -1.0, 1.0),
+        "signal": signal,
+        "confidence": _clamp(_to_float(payload.get("confidence"), default=0.0), 0.0, 100.0),
+        "market_regime": str(payload.get("market_regime", "unknown")),
+        "profile": str(payload.get("profile", "neutral")),
+        "benchmark_symbol": payload.get("benchmark_symbol"),
+        "benchmark_price": max(0.0, _to_float(payload.get("benchmark_price"), default=0.0)),
+        "predicted_move_pct": _to_float(payload.get("predicted_move_pct"), default=0.0),
+        "model_samples": max(0, int(_to_float(payload.get("model_samples"), default=0.0))),
+        "enabled": bool(payload.get("enabled", False)),
+    }
+
+
+def load_market_index(db_path: Path) -> dict[str, Any]:
+    payload = load_santrade_intelligence(db_path)
+    if not payload:
+        return {
+            "generated_at": None,
+            "index_value": 50.0,
+            "market_score": 0.0,
+            "signal": "HOLD",
+            "confidence": 0.0,
+            "market_regime": "unknown",
+            "profile": "neutral",
+            "benchmark_symbol": None,
+            "benchmark_price": 0.0,
+            "predicted_move_pct": 0.0,
+            "model_samples": 0,
+            "enabled": False,
+        }
+    return market_index_from_payload(payload)
+
+
+def load_market_index_history(db_path: Path, limit: int = 240) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+
+    bounded = max(1, min(int(limit), 2000))
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "cycles"):
+            return []
+        rows = conn.execute(
+            """
+            SELECT ts, data_json
+            FROM cycles
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (bounded,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    history: list[dict[str, Any]] = []
+    for ts, data_json in reversed(rows):
+        payload = _safe_json(data_json)
+        if not payload:
+            continue
+        score_raw = payload.get("market_intelligence_score")
+        if score_raw is None:
+            continue
+        score = _clamp(_to_float(score_raw, default=0.0), -1.0, 1.0)
+        signal = _normalize_signal(payload.get("market_intelligence_signal")) or "HOLD"
+        history.append(
+            {
+                "ts": ts,
+                "index_value": _clamp((score + 1.0) * 50.0, 0.0, 100.0),
+                "market_score": score,
+                "confidence": _clamp(_to_float(payload.get("market_intelligence_confidence"), default=0.0), 0.0, 100.0),
+                "signal": signal,
+                "market_regime": str(payload.get("market_intelligence_regime", "unknown")),
+                "profile": str(payload.get("market_intelligence_profile", "neutral")),
+            }
+        )
+    return history
 
 
 def list_model_bundles(models_dir: Path) -> list[dict[str, Any]]:

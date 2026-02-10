@@ -19,6 +19,8 @@ from public_api.data_access import (
     build_models_archive,
     list_model_bundles,
     load_account_state,
+    load_market_index,
+    load_market_index_history,
     load_recent_trades,
     load_runtime_summary,
     load_santrade_intelligence,
@@ -133,6 +135,17 @@ def create_app() -> FastAPI:
     site_dir = Path(__file__).resolve().parent / "site"
     app.mount("/assets", StaticFiles(directory=str(site_dir)), name="assets")
 
+    def _market_index_point(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ts": payload.get("generated_at"),
+            "index_value": float(payload.get("index_value", 50.0)),
+            "market_score": float(payload.get("market_score", 0.0)),
+            "confidence": float(payload.get("confidence", 0.0)),
+            "signal": str(payload.get("signal", "HOLD")).upper(),
+            "market_regime": str(payload.get("market_regime", "unknown")),
+            "profile": str(payload.get("profile", "neutral")),
+        }
+
     @app.middleware("http")
     async def _metrics_middleware(request, call_next):  # type: ignore[no-untyped-def]
         start = time.perf_counter()
@@ -235,6 +248,31 @@ def create_app() -> FastAPI:
             }
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
+    @app.get("/api/v1/market/index")
+    async def market_index() -> JSONResponse:
+        payload = load_market_index(settings.db_path)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v1/market/index/history")
+    async def market_index_history(limit: int = Query(default=240, ge=1, le=2000)) -> JSONResponse:
+        rows = load_market_index_history(settings.db_path, limit=limit)
+        latest = load_market_index(settings.db_path)
+        latest_ts = latest.get("generated_at")
+
+        if latest_ts:
+            point = _market_index_point(latest)
+            if not rows or str(rows[-1].get("ts")) != str(latest_ts):
+                rows.append(point)
+            else:
+                rows[-1] = point
+        if len(rows) > limit:
+            rows = rows[-limit:]
+
+        return JSONResponse(
+            {"total_rows": len(rows), "returned_rows": len(rows), "rows": rows, "latest": latest},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.get("/api/v1/models")
     async def models() -> JSONResponse:
         bundles = list_model_bundles(settings.models_dir)
@@ -290,6 +328,57 @@ def create_app() -> FastAPI:
                 if generated_at != last_generated_at:
                     await websocket.send_json({"type": "predictions", "payload": payload})
                     last_generated_at = generated_at
+                await asyncio.sleep(settings.ws_poll_sec)
+        except WebSocketDisconnect:
+            return
+
+    @app.websocket("/ws/market/intelligence")
+    async def ws_market_intelligence(websocket: WebSocket) -> None:
+        await websocket.accept()
+        limit_raw = websocket.query_params.get("limit")
+        try:
+            limit = int(limit_raw) if limit_raw else 240
+        except ValueError:
+            limit = 240
+        limit = max(1, min(limit, 2000))
+
+        rows = load_market_index_history(settings.db_path, limit=limit)
+        latest = load_market_index(settings.db_path)
+        latest_ts = latest.get("generated_at")
+        if latest_ts:
+            point = _market_index_point(latest)
+            if not rows or str(rows[-1].get("ts")) != str(latest_ts):
+                rows.append(point)
+            elif rows:
+                rows[-1] = point
+        if len(rows) > limit:
+            rows = rows[-limit:]
+
+        await websocket.send_json(
+            {"type": "market_intelligence", "payload": {"total_rows": len(rows), "rows": rows, "latest": latest}}
+        )
+        last_cursor = f"{latest.get('generated_at')}|{latest.get('index_value')}|{latest.get('signal')}"
+
+        try:
+            while True:
+                latest = load_market_index(settings.db_path)
+                cursor = f"{latest.get('generated_at')}|{latest.get('index_value')}|{latest.get('signal')}"
+                if cursor != last_cursor:
+                    latest_ts = latest.get("generated_at")
+                    if latest_ts:
+                        point = _market_index_point(latest)
+                        if not rows or str(rows[-1].get("ts")) != str(latest_ts):
+                            rows.append(point)
+                        else:
+                            rows[-1] = point
+                        rows = rows[-limit:]
+                    await websocket.send_json(
+                        {
+                            "type": "market_intelligence",
+                            "payload": {"total_rows": len(rows), "rows": rows, "latest": latest},
+                        }
+                    )
+                    last_cursor = cursor
                 await asyncio.sleep(settings.ws_poll_sec)
         except WebSocketDisconnect:
             return
