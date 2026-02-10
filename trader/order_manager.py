@@ -7,6 +7,10 @@ from bn_ml.exchange import build_binance_spot_exchange, call_with_retry
 from bn_ml.domain_types import Position
 
 
+class OrderConstraintError(ValueError):
+    """Raised when order amount/notional violates exchange constraints."""
+
+
 class OrderManager:
     def __init__(self, config: dict, paper: bool = True) -> None:
         self.config = config
@@ -155,7 +159,7 @@ class OrderManager:
     @staticmethod
     def _validate_order_constraints(symbol: str, amount: float, price: float, limits: dict[str, float | None]) -> None:
         if amount <= 0:
-            raise ValueError(f"Order size too small for market precision: {symbol}")
+            raise OrderConstraintError(f"Order size too small for market precision: {symbol}")
 
         min_qty = limits.get("min_qty")
         max_qty = limits.get("max_qty")
@@ -163,13 +167,13 @@ class OrderManager:
 
         eps = 1e-12
         if min_qty is not None and amount + eps < min_qty:
-            raise ValueError(f"Order amount below minQty for {symbol}: {amount} < {min_qty}")
+            raise OrderConstraintError(f"Order amount below minQty for {symbol}: {amount} < {min_qty}")
         if max_qty is not None and amount - eps > max_qty:
-            raise ValueError(f"Order amount above maxQty for {symbol}: {amount} > {max_qty}")
+            raise OrderConstraintError(f"Order amount above maxQty for {symbol}: {amount} > {max_qty}")
 
         notional = amount * max(price, 0.0)
         if min_notional is not None and notional + eps < min_notional:
-            raise ValueError(f"Order notional below minNotional for {symbol}: {notional} < {min_notional}")
+            raise OrderConstraintError(f"Order notional below minNotional for {symbol}: {notional} < {min_notional}")
 
     @staticmethod
     def _market_limits(exchange, symbol: str) -> dict[str, float | None]:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from trader.order_manager import OrderManager
+from trader.order_manager import OrderConstraintError, OrderManager
 
 
 def test_validate_order_constraints_accepts_valid_order() -> None:
@@ -12,13 +12,13 @@ def test_validate_order_constraints_accepts_valid_order() -> None:
 
 def test_validate_order_constraints_rejects_min_qty() -> None:
     limits = {"min_qty": 0.01, "max_qty": None, "min_notional": None}
-    with pytest.raises(ValueError, match="minQty"):
+    with pytest.raises(OrderConstraintError, match="minQty"):
         OrderManager._validate_order_constraints(symbol="BTC/USDT", amount=0.001, price=1000.0, limits=limits)
 
 
 def test_validate_order_constraints_rejects_min_notional() -> None:
     limits = {"min_qty": 0.001, "max_qty": None, "min_notional": 10.0}
-    with pytest.raises(ValueError, match="minNotional"):
+    with pytest.raises(OrderConstraintError, match="minNotional"):
         OrderManager._validate_order_constraints(symbol="BTC/USDT", amount=0.001, price=1000.0, limits=limits)
 
 

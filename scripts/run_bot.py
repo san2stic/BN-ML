@@ -32,7 +32,7 @@ from monitoring.realtime_prices import BinanceRealtimePriceMonitor
 from scanner.opportunity_scanner import MultiPairScanner
 from scripts.run_trainer import train_once
 from trader.exit_manager import ExitManager
-from trader.order_manager import OrderManager
+from trader.order_manager import OrderConstraintError, OrderManager
 from trader.position_manager import PositionManager
 from trader.risk_manager import RiskManager
 
@@ -1024,6 +1024,8 @@ class TradingRuntime:
                     },
                 )
                 self.logger.info("OPEN %s size=%.2f entry=%.4f", pos.symbol, pos.size_usdt, pos.entry_price)
+            except OrderConstraintError as exc:
+                self.logger.info("Skip %s: %s", opp.symbol, exc)
             except Exception as exc:
                 self.logger.exception("Error while processing %s: %s", opp.symbol, exc)
 
