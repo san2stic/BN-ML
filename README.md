@@ -325,6 +325,7 @@ Recommandations:
 
 - `configs/bot.yaml`: configuration runtime
 - `scripts/run_bot.py`: boucle de trading
+- `scripts/run_santrade_intelligence.py`: moteur global marché standalone (SanTradeIntelligence)
 - `scripts/run_trainer.py`: entraînement per-symbol
 - `monitoring/dashboard.py`: interface web
 - `public_api/app.py`: API publique + websocket + endpoint metrics
@@ -426,14 +427,16 @@ python3 -m scripts.model_sync daemon --role runpod_client --config configs/bot.y
 ## 12) Docker (RunPod quotidien)
 
 Le compose inclut un service dédié `model-sync-runpod` qui exécute le daemon quotidien (`--role runpod_client`).
+Le compose inclut aussi un service dédié `santrade-intelligence-paper` / `santrade-intelligence-live`
+qui exécute `scripts.run_santrade_intelligence` en boucle (sans exécution d'ordres).
 L'image Docker utilise un CMD par défaut train-only (`scripts.runpod_train_only`), pas `run_bot`.
 
 ```bash
-# stack paper avec sync RunPod
-docker compose --profile paper --profile runpod up -d bot-paper model-sync-runpod dashboard api prometheus grafana
+# stack paper avec SanTradeIntelligence + sync RunPod
+docker compose --profile paper --profile runpod up -d bot-paper santrade-intelligence-paper model-sync-runpod dashboard api prometheus grafana
 
-# stack live avec sync RunPod
-docker compose --profile live --profile runpod up -d bot-live model-sync-runpod dashboard api prometheus grafana
+# stack live avec SanTradeIntelligence + sync RunPod
+docker compose --profile live --profile runpod up -d bot-live santrade-intelligence-live model-sync-runpod dashboard api prometheus grafana
 ```
 
 Dans `.env`, définir `RUNPOD_API_KEY=...`.
