@@ -65,6 +65,9 @@ def _state() -> dict:
         "consecutive_losses": 0,
         "market_volatility_ratio": 1.0,
         "market_drift_detected": False,
+        "market_intelligence_signal": "HOLD",
+        "market_intelligence_confidence": 0.0,
+        "market_intelligence_regime": "neutral",
         "win_rate": 0.56,
         "avg_win": 1.8,
         "avg_loss": 1.0,
@@ -199,3 +202,32 @@ def test_dynamic_pair_filter_benchmark_allows_btc_correlation() -> None:
 
     assert allowed is True
     assert reasons == []
+
+
+def test_blocks_when_santrade_intelligence_bearish_breaker_active() -> None:
+    cfg = _config()
+    cfg["risk"]["circuit_breakers"]["market_intelligence_block_enabled"] = True
+    cfg["risk"]["circuit_breakers"]["market_intelligence_min_confidence"] = 72
+    rm = RiskManager(cfg)
+    state = _state()
+    state["market_intelligence_signal"] = "SELL"
+    state["market_intelligence_confidence"] = 81.0
+
+    allowed, reasons, _ = rm.can_open_position(_opportunity(), [], state)
+
+    assert allowed is False
+    assert any("SanTradeIntelligence bearish circuit breaker active." in reason for reason in reasons)
+
+
+def test_blocks_when_santrade_intelligence_risk_off_breaker_active() -> None:
+    cfg = _config()
+    cfg["risk"]["circuit_breakers"]["market_intelligence_block_enabled"] = True
+    cfg["risk"]["circuit_breakers"]["market_intelligence_block_on_risk_off"] = True
+    rm = RiskManager(cfg)
+    state = _state()
+    state["market_intelligence_regime"] = "risk_off"
+
+    allowed, reasons, _ = rm.can_open_position(_opportunity(), [], state)
+
+    assert allowed is False
+    assert any("SanTradeIntelligence risk-off circuit breaker active." in reason for reason in reasons)

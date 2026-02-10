@@ -5,7 +5,13 @@ from pathlib import Path
 
 from bn_ml.domain_types import Position
 from bn_ml.state_store import StateStore
-from public_api.data_access import load_account_state, load_recent_trades, load_runtime_summary, read_prediction_snapshot
+from public_api.data_access import (
+    load_account_state,
+    load_recent_trades,
+    load_runtime_summary,
+    load_santrade_intelligence,
+    read_prediction_snapshot,
+)
 
 
 def _write_scan(path: Path) -> None:
@@ -42,6 +48,14 @@ def test_read_prediction_snapshot_missing_file(tmp_path: Path) -> None:
 def test_runtime_sqlite_access(tmp_path: Path) -> None:
     store = StateStore(db_path=str(tmp_path / "state.db"))
     store.save_account_state({"total_capital": 2500.0, "active_capital": 1500.0, "daily_pnl_pct": 1.2})
+    store.set_state(
+        "santrade_intelligence",
+        {
+            "signal": "BUY",
+            "confidence": 77.0,
+            "market_regime": "bull_acceleration",
+        },
+    )
 
     pos = Position(
         symbol="BTC/USDT",
@@ -70,3 +84,5 @@ def test_runtime_sqlite_access(tmp_path: Path) -> None:
     assert summary["total_trades"] == 1
     assert summary["total_cycles"] == 1
 
+    intelligence = load_santrade_intelligence(db_path)
+    assert intelligence["signal"] == "BUY"

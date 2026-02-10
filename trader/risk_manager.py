@@ -171,6 +171,19 @@ class RiskManager:
         ):
             reasons.append("Market drift circuit breaker active.")
 
+        cb_cfg = self.risk_cfg.get("circuit_breakers", {})
+        if bool(cb_cfg.get("market_intelligence_block_enabled", False)):
+            intelligence_signal = str(account_state.get("market_intelligence_signal", "HOLD")).strip().upper()
+            intelligence_confidence = self._to_float(account_state.get("market_intelligence_confidence"), 0.0)
+            confidence_min = self._to_float(cb_cfg.get("market_intelligence_min_confidence"), 70.0)
+            if intelligence_signal == "SELL" and intelligence_confidence >= confidence_min:
+                reasons.append("SanTradeIntelligence bearish circuit breaker active.")
+
+            risk_off_enabled = bool(cb_cfg.get("market_intelligence_block_on_risk_off", True))
+            intelligence_regime = str(account_state.get("market_intelligence_regime", "")).strip().lower()
+            if risk_off_enabled and intelligence_regime == "risk_off":
+                reasons.append("SanTradeIntelligence risk-off circuit breaker active.")
+
         if opportunity.correlation_with_btc > correlation_limit:
             reasons.append("Correlation threshold exceeded.")
 
