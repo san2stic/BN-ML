@@ -624,10 +624,15 @@ class TradingRuntime:
             "market_intelligence_signal": "HOLD",
             "market_intelligence_confidence": 0.0,
             "market_intelligence_score": 0.0,
+            "market_intelligence_raw_score": 0.0,
+            "market_intelligence_smoothed_score": 0.0,
             "market_intelligence_regime": "unknown",
             "market_intelligence_predicted_move_pct": 0.0,
             "market_intelligence_symbols": 0,
             "market_intelligence_model_samples": 0,
+            "market_intelligence_profile": "defensive",
+            "market_intelligence_coverage_ratio": 0.0,
+            "market_intelligence_directional_streak": 0,
             "market_intelligence_updated_at": None,
             "win_rate": 0.56,
             "avg_win": 1.8,
@@ -807,10 +812,15 @@ class TradingRuntime:
             self.account_state["market_intelligence_signal"] = payload.get("signal", "HOLD")
             self.account_state["market_intelligence_confidence"] = float(payload.get("confidence", 0.0))
             self.account_state["market_intelligence_score"] = float(payload.get("market_score", 0.0))
+            self.account_state["market_intelligence_raw_score"] = float(payload.get("raw_market_score", 0.0))
+            self.account_state["market_intelligence_smoothed_score"] = float(payload.get("smoothed_market_score", 0.0))
             self.account_state["market_intelligence_regime"] = str(payload.get("market_regime", "unknown"))
             self.account_state["market_intelligence_predicted_move_pct"] = float(payload.get("predicted_move_pct", 0.0))
             self.account_state["market_intelligence_symbols"] = int(payload.get("symbols_scanned", 0))
             self.account_state["market_intelligence_model_samples"] = int(payload.get("model_samples", 0))
+            self.account_state["market_intelligence_profile"] = str(payload.get("profile", "neutral"))
+            self.account_state["market_intelligence_coverage_ratio"] = float(payload.get("data_coverage_ratio", 0.0))
+            self.account_state["market_intelligence_directional_streak"] = int(payload.get("directional_streak", 0))
             self.account_state["market_intelligence_updated_at"] = payload.get("generated_at")
 
             self.store.set_state("santrade_intelligence", payload)
@@ -1073,6 +1083,12 @@ class TradingRuntime:
                         "santrade_intelligence_confidence": float(
                             self.account_state.get("market_intelligence_confidence", 0.0)
                         ),
+                        "santrade_intelligence_profile": str(
+                            self.account_state.get("market_intelligence_profile", "neutral")
+                        ),
+                        "santrade_intelligence_score": float(
+                            self.account_state.get("market_intelligence_score", 0.0)
+                        ),
                         "santrade_intelligence_regime": str(
                             self.account_state.get("market_intelligence_regime", "unknown")
                         ),
@@ -1096,7 +1112,9 @@ class TradingRuntime:
                 "weekly_pnl_pct": self.account_state.get("weekly_pnl_pct", 0.0),
                 "market_intelligence_signal": self.account_state.get("market_intelligence_signal", "HOLD"),
                 "market_intelligence_confidence": self.account_state.get("market_intelligence_confidence", 0.0),
+                "market_intelligence_score": self.account_state.get("market_intelligence_score", 0.0),
                 "market_intelligence_regime": self.account_state.get("market_intelligence_regime", "unknown"),
+                "market_intelligence_profile": self.account_state.get("market_intelligence_profile", "neutral"),
             },
         )
         self._sync_live_capital()

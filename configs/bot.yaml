@@ -61,7 +61,7 @@ model:
   auto_retrain_enabled: true
   auto_train_missing_models: true
   auto_train_missing_batch_size: 5
-  auto_train_missing_disable_hpo: true
+  auto_train_missing_disable_hpo: false
   feature_limit: 50
   sequence_length: 64
   random_state: 42
@@ -170,18 +170,36 @@ model:
     vol_ratio_threshold: 1.8
   santrade_intelligence:
     enabled: true
-    min_pairs: 8
+    profile: defensive
     benchmark_symbol: ""
-    bearish_threshold: -0.22
-    bullish_threshold: 0.22
-    atr_risk_off_ratio: 0.018
-    spread_risk_off_pct: 0.18
-    online_target_hold_band_pct: 0.06
-    min_samples_for_model: 24
-    model_blend_weight: 0.45
     online_alpha: 0.0005
     persist_every_updates: 5
     state_path: artifacts/state/santrade_intelligence.joblib
+    profiles:
+      aggressive:
+        min_pairs: 6
+        bullish_threshold: 0.14
+        bearish_threshold: -0.14
+        atr_risk_off_ratio: 0.026
+        spread_risk_off_pct: 0.30
+        min_directional_confidence: 58
+        min_directional_streak: 1
+      neutral:
+        min_pairs: 8
+        bullish_threshold: 0.22
+        bearish_threshold: -0.22
+        atr_risk_off_ratio: 0.018
+        spread_risk_off_pct: 0.18
+        min_directional_confidence: 68
+        min_directional_streak: 2
+      defensive:
+        min_pairs: 12
+        bullish_threshold: 0.30
+        bearish_threshold: -0.28
+        atr_risk_off_ratio: 0.014
+        spread_risk_off_pct: 0.12
+        min_directional_confidence: 78
+        min_directional_streak: 2
 
 model_sync:
   enabled: false
@@ -241,7 +259,12 @@ risk:
     drift_block_enabled: true
     market_intelligence_block_enabled: true
     market_intelligence_min_confidence: 72
+    market_intelligence_min_confidence_by_profile:
+      aggressive: 64
+      neutral: 70
+      defensive: 78
     market_intelligence_block_on_risk_off: true
+    market_intelligence_score_block_threshold: null
   drift_benchmark_symbol: ""
 
 monitoring:

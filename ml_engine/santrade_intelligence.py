@@ -40,6 +40,11 @@ class SanTradeIntelligenceSnapshot:
     model_ready: bool
     benchmark_symbol: str
     benchmark_price: float
+    profile: str = "neutral"
+    raw_market_score: float = 0.0
+    smoothed_market_score: float = 0.0
+    data_coverage_ratio: float = 0.0
+    directional_streak: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -63,9 +68,67 @@ class SanTradeIntelligence:
         "breadth_delta",
         "momentum_bias",
         "ml_bias",
+        "global_bias",
         "risk_pressure",
+        "data_coverage_ratio",
         "heuristic_market_score",
     ]
+    PROFILE_PRESETS: dict[str, dict[str, float]] = {
+        "aggressive": {
+            "min_pairs": 6,
+            "bullish_threshold": 0.14,
+            "bearish_threshold": -0.14,
+            "atr_risk_off_ratio": 0.026,
+            "spread_risk_off_pct": 0.30,
+            "online_target_hold_band_pct": 0.04,
+            "min_samples_for_model": 12,
+            "model_blend_weight": 0.65,
+            "signal_smoothing_alpha": 0.45,
+            "min_directional_confidence": 58.0,
+            "min_directional_streak": 1,
+            "breadth_weight": 0.50,
+            "momentum_weight": 0.22,
+            "ml_weight": 0.20,
+            "global_weight": 0.08,
+            "risk_penalty_weight": 0.22,
+        },
+        "neutral": {
+            "min_pairs": 8,
+            "bullish_threshold": 0.22,
+            "bearish_threshold": -0.22,
+            "atr_risk_off_ratio": 0.018,
+            "spread_risk_off_pct": 0.18,
+            "online_target_hold_band_pct": 0.06,
+            "min_samples_for_model": 24,
+            "model_blend_weight": 0.45,
+            "signal_smoothing_alpha": 0.30,
+            "min_directional_confidence": 68.0,
+            "min_directional_streak": 2,
+            "breadth_weight": 0.48,
+            "momentum_weight": 0.22,
+            "ml_weight": 0.20,
+            "global_weight": 0.10,
+            "risk_penalty_weight": 0.30,
+        },
+        "defensive": {
+            "min_pairs": 12,
+            "bullish_threshold": 0.30,
+            "bearish_threshold": -0.28,
+            "atr_risk_off_ratio": 0.014,
+            "spread_risk_off_pct": 0.12,
+            "online_target_hold_band_pct": 0.05,
+            "min_samples_for_model": 36,
+            "model_blend_weight": 0.30,
+            "signal_smoothing_alpha": 0.22,
+            "min_directional_confidence": 78.0,
+            "min_directional_streak": 2,
+            "breadth_weight": 0.46,
+            "momentum_weight": 0.20,
+            "ml_weight": 0.18,
+            "global_weight": 0.16,
+            "risk_penalty_weight": 0.42,
+        },
+    }
 
     def __init__(self, config: dict[str, Any], data_manager: Any, logger: Any | None = None) -> None:
         self.config = config
@@ -75,17 +138,39 @@ class SanTradeIntelligence:
         model_cfg = config.get("model", {}) if isinstance(config.get("model", {}), dict) else {}
         sti_cfg = model_cfg.get("santrade_intelligence", {}) if isinstance(model_cfg.get("santrade_intelligence", {}), dict) else {}
 
+        self.profile = self._resolve_profile_name(sti_cfg)
+        profile_cfg = self._resolved_profile_settings(sti_cfg=sti_cfg, profile=self.profile)
+
         self.enabled = bool(sti_cfg.get("enabled", True))
-        self.min_pairs = max(3, int(sti_cfg.get("min_pairs", 8)))
-        self.bearish_threshold = float(sti_cfg.get("bearish_threshold", -0.22))
-        self.bullish_threshold = float(sti_cfg.get("bullish_threshold", 0.22))
-        self.atr_risk_off_ratio = max(1e-9, float(sti_cfg.get("atr_risk_off_ratio", 0.018)))
-        self.spread_risk_off_pct = max(1e-9, float(sti_cfg.get("spread_risk_off_pct", 0.18)))
-        self.hold_target_band = abs(float(sti_cfg.get("online_target_hold_band_pct", 0.06))) / 100.0
-        self.min_samples_for_model = max(8, int(sti_cfg.get("min_samples_for_model", 24)))
-        self.max_blend_weight = float(np.clip(float(sti_cfg.get("model_blend_weight", 0.45)), 0.0, 1.0))
+        self.min_pairs = max(3, int(self._cfg(profile_cfg, sti_cfg, "min_pairs")))
+
+        raw_bearish = float(self._cfg(profile_cfg, sti_cfg, "bearish_threshold"))
+        raw_bullish = float(self._cfg(profile_cfg, sti_cfg, "bullish_threshold"))
+        self.bearish_threshold = min(-0.01, raw_bearish)
+        self.bullish_threshold = max(0.01, raw_bullish)
+
+        self.atr_risk_off_ratio = max(1e-9, float(self._cfg(profile_cfg, sti_cfg, "atr_risk_off_ratio")))
+        self.spread_risk_off_pct = max(1e-9, float(self._cfg(profile_cfg, sti_cfg, "spread_risk_off_pct")))
+        self.hold_target_band = abs(float(self._cfg(profile_cfg, sti_cfg, "online_target_hold_band_pct"))) / 100.0
+        self.min_samples_for_model = max(8, int(self._cfg(profile_cfg, sti_cfg, "min_samples_for_model")))
+        self.max_blend_weight = float(np.clip(float(self._cfg(profile_cfg, sti_cfg, "model_blend_weight")), 0.0, 1.0))
         self.persist_every_updates = max(1, int(sti_cfg.get("persist_every_updates", 5)))
         self.configured_benchmark_symbol = str(sti_cfg.get("benchmark_symbol", "")).strip().upper()
+
+        self.signal_smoothing_alpha = float(
+            np.clip(float(self._cfg(profile_cfg, sti_cfg, "signal_smoothing_alpha")), 0.05, 1.0)
+        )
+        self.min_directional_confidence = float(
+            np.clip(float(self._cfg(profile_cfg, sti_cfg, "min_directional_confidence")), 0.0, 100.0)
+        )
+        self.min_directional_streak = max(1, int(self._cfg(profile_cfg, sti_cfg, "min_directional_streak")))
+
+        self.weight_breadth = max(0.0, float(self._cfg(profile_cfg, sti_cfg, "breadth_weight")))
+        self.weight_momentum = max(0.0, float(self._cfg(profile_cfg, sti_cfg, "momentum_weight")))
+        self.weight_ml = max(0.0, float(self._cfg(profile_cfg, sti_cfg, "ml_weight")))
+        self.weight_global = max(0.0, float(self._cfg(profile_cfg, sti_cfg, "global_weight")))
+        self.risk_penalty_weight = max(0.0, float(self._cfg(profile_cfg, sti_cfg, "risk_penalty_weight")))
+        self._normalize_score_weights()
 
         state_path = str(sti_cfg.get("state_path", "artifacts/state/santrade_intelligence.joblib"))
         self.state_path = Path(state_path)
@@ -111,6 +196,9 @@ class SanTradeIntelligence:
 
         self._previous_vector: np.ndarray | None = None
         self._previous_benchmark_price: float = 0.0
+        self._smoothed_score: float | None = None
+        self._previous_directional_signal: str = "HOLD"
+        self._directional_streak: int = 0
 
         self._load_state()
 
@@ -147,6 +235,10 @@ class SanTradeIntelligence:
                 score_dispersion=0.0,
                 benchmark_symbol=self._resolve_benchmark_symbol(quote_asset),
                 benchmark_price=0.0,
+                raw_market_score=0.0,
+                smoothed_market_score=0.0,
+                data_coverage_ratio=0.0,
+                directional_streak=0,
             )
 
         stats = self._aggregate_market_stats(pair_list=pair_list, opportunities=opps)
@@ -159,31 +251,40 @@ class SanTradeIntelligence:
         model_score, model_action, model_confidence = self._predict_model(vector)
 
         heuristic_score = float(stats["heuristic_market_score"])
-        heuristic_signal = self._signal_from_score(heuristic_score)
         heuristic_confidence = float(stats["heuristic_confidence"])
 
-        final_score = heuristic_score
-        final_signal = heuristic_signal
+        raw_score = heuristic_score
         final_confidence = heuristic_confidence
         if model_score is not None and model_action is not None and model_confidence is not None:
             blend = self._blend_weight()
-            final_score = float(np.clip((1.0 - blend) * heuristic_score + blend * model_score, -1.0, 1.0))
-            final_signal = self._signal_from_score(final_score)
+            raw_score = float(np.clip((1.0 - blend) * heuristic_score + blend * model_score, -1.0, 1.0))
             final_confidence = float(
                 np.clip((1.0 - blend) * heuristic_confidence + blend * model_confidence, 0.0, 100.0)
             )
-            if final_signal == "HOLD" and model_action in {"BUY", "SELL"} and model_confidence >= 80.0:
-                final_signal = model_action
 
-        predicted_move_pct = float(np.clip(final_score * max(0.10, stats["avg_atr_ratio"] * 100.0 * 1.5), -12.0, 12.0))
+        smoothed_score = self._smooth_score(raw_score)
+        candidate_signal = self._signal_from_score(smoothed_score)
+        final_signal = self._stabilize_signal(
+            candidate_signal=candidate_signal,
+            confidence=final_confidence,
+            opportunities_scanned=len(opps),
+            data_coverage_ratio=stats["data_coverage_ratio"],
+        )
+
+        if final_signal == "HOLD" and candidate_signal != "HOLD":
+            final_confidence = min(final_confidence, max(0.0, self.min_directional_confidence - 2.0))
+
+        predicted_move_pct = float(np.clip(smoothed_score * max(0.10, stats["avg_atr_ratio"] * 100.0 * 1.5), -12.0, 12.0))
 
         market_regime = self._resolve_regime(
             signal=final_signal,
-            market_score=final_score,
+            market_score=smoothed_score,
             avg_atr_ratio=stats["avg_atr_ratio"],
             avg_spread_pct=stats["avg_spread_pct"],
             buy_ratio=stats["buy_ratio"],
             sell_ratio=stats["sell_ratio"],
+            risk_pressure=stats["risk_pressure"],
+            data_coverage_ratio=stats["data_coverage_ratio"],
             opportunities_scanned=len(opps),
         )
 
@@ -194,7 +295,7 @@ class SanTradeIntelligence:
             generated_at=timestamp,
             signal=final_signal,
             confidence=final_confidence,
-            market_score=final_score,
+            market_score=smoothed_score,
             market_regime=market_regime,
             predicted_move_pct=predicted_move_pct,
             symbols_scanned=len(pair_list),
@@ -212,6 +313,10 @@ class SanTradeIntelligence:
             score_dispersion=stats["score_dispersion"],
             benchmark_symbol=benchmark_symbol,
             benchmark_price=benchmark_price,
+            raw_market_score=raw_score,
+            smoothed_market_score=smoothed_score,
+            data_coverage_ratio=stats["data_coverage_ratio"],
+            directional_streak=self._directional_streak,
         )
 
         self._updates_since_persist += 1
@@ -239,16 +344,16 @@ class SanTradeIntelligence:
                 "breadth_delta": 0.0,
                 "momentum_bias": 0.0,
                 "ml_bias": 0.0,
+                "global_bias": 0.0,
                 "risk_pressure": 0.0,
+                "data_coverage_ratio": 0.0,
                 "heuristic_market_score": 0.0,
                 "heuristic_confidence": 0.0,
             }
 
         weights = np.asarray([max(float(o.orderbook_depth_usdt), 1.0) for o in opportunities], dtype=float)
-        weight_sum = float(np.sum(weights))
-        if weight_sum <= 1e-12:
+        if float(np.sum(weights)) <= 1e-12:
             weights = np.ones(len(opportunities), dtype=float)
-            weight_sum = float(len(opportunities))
 
         buy_count = sum(1 for o in opportunities if str(o.signal.action).upper() == "BUY")
         sell_count = sum(1 for o in opportunities if str(o.signal.action).upper() == "SELL")
@@ -270,21 +375,34 @@ class SanTradeIntelligence:
         breadth_delta = buy_ratio - sell_ratio
         momentum_bias = float(np.clip((avg_mom - 50.0) / 50.0, -1.0, 1.0))
         ml_bias = float(np.clip((avg_ml - 50.0) / 50.0, -1.0, 1.0))
+        global_bias = float(np.clip((avg_global - 50.0) / 50.0, -1.0, 1.0))
 
         atr_pressure = max(0.0, (avg_atr / self.atr_risk_off_ratio) - 1.0)
         spread_pressure = max(0.0, (avg_spread / self.spread_risk_off_pct) - 1.0)
         correlation_pressure = max(0.0, avg_corr - 0.75)
         risk_pressure = float(np.clip(0.45 * atr_pressure + 0.35 * spread_pressure + 0.20 * correlation_pressure, 0.0, 3.0))
 
-        heuristic_score = 0.55 * breadth_delta + 0.25 * momentum_bias + 0.20 * ml_bias - 0.30 * risk_pressure
-        if len(pair_list) < self.min_pairs or count < self.min_pairs:
-            heuristic_score *= 0.55
-        heuristic_score = float(np.clip(heuristic_score, -1.0, 1.0))
+        observed_symbols = {str(opp.symbol).upper() for opp in opportunities}
+        expected_symbols = max(len(pair_list), 1)
+        data_coverage_ratio = float(np.clip(len(observed_symbols) / expected_symbols, 0.0, 1.0))
 
-        confidence = (abs(heuristic_score) * 100.0) + (abs(breadth_delta) * 30.0) - min(20.0, score_dispersion * 0.3)
+        trend_score = (
+            (self.weight_breadth * breadth_delta)
+            + (self.weight_momentum * momentum_bias)
+            + (self.weight_ml * ml_bias)
+            + (self.weight_global * global_bias)
+        )
+        heuristic_score = trend_score - (self.risk_penalty_weight * risk_pressure)
+        coverage_factor = (0.50 + 0.50 * data_coverage_ratio)
+        if len(pair_list) < self.min_pairs or count < self.min_pairs:
+            coverage_factor *= 0.82
+        heuristic_score = float(np.clip(heuristic_score * coverage_factor, -1.0, 1.0))
+
+        base_confidence = (abs(heuristic_score) * 95.0) + (abs(breadth_delta) * 24.0) + (max(0.0, data_coverage_ratio - 0.40) * 18.0)
+        uncertainty_penalty = min(22.0, score_dispersion * 0.35) + min(20.0, risk_pressure * 7.5)
+        confidence = float(np.clip(base_confidence - uncertainty_penalty, 0.0, 100.0))
         if len(pair_list) < self.min_pairs:
-            confidence *= 0.65
-        confidence = float(np.clip(confidence, 0.0, 100.0))
+            confidence *= 0.78
 
         return {
             "buy_ratio": buy_ratio,
@@ -301,7 +419,9 @@ class SanTradeIntelligence:
             "breadth_delta": breadth_delta,
             "momentum_bias": momentum_bias,
             "ml_bias": ml_bias,
+            "global_bias": global_bias,
             "risk_pressure": risk_pressure,
+            "data_coverage_ratio": data_coverage_ratio,
             "heuristic_market_score": heuristic_score,
             "heuristic_confidence": confidence,
         }
@@ -319,10 +439,7 @@ class SanTradeIntelligence:
         return float(np.sum(arr * weights) / denom)
 
     def _vector_from_stats(self, stats: dict[str, float]) -> np.ndarray:
-        vector = [
-            float(stats[field]) if field in stats else 0.0
-            for field in self.VECTOR_FIELDS
-        ]
+        vector = [float(stats[field]) if field in stats else 0.0 for field in self.VECTOR_FIELDS]
         arr = np.asarray(vector, dtype=float)
         arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
         if arr.size != self._vector_dim:
@@ -384,6 +501,45 @@ class SanTradeIntelligence:
         dynamic = self._model_samples / (self._model_samples + 30.0)
         return float(np.clip(min(self.max_blend_weight, dynamic), 0.0, self.max_blend_weight))
 
+    def _smooth_score(self, score: float) -> float:
+        score = float(np.clip(score, -1.0, 1.0))
+        if self._smoothed_score is None:
+            self._smoothed_score = score
+        else:
+            alpha = self.signal_smoothing_alpha
+            self._smoothed_score = float(np.clip((alpha * score) + ((1.0 - alpha) * self._smoothed_score), -1.0, 1.0))
+        return self._smoothed_score
+
+    def _stabilize_signal(
+        self,
+        *,
+        candidate_signal: str,
+        confidence: float,
+        opportunities_scanned: int,
+        data_coverage_ratio: float,
+    ) -> str:
+        if opportunities_scanned < self.min_pairs or data_coverage_ratio < 0.35:
+            self._directional_streak = 0
+            return "HOLD"
+
+        if candidate_signal == "HOLD":
+            self._directional_streak = 0
+            return "HOLD"
+
+        if confidence < self.min_directional_confidence:
+            self._directional_streak = 0
+            return "HOLD"
+
+        if candidate_signal == self._previous_directional_signal:
+            self._directional_streak += 1
+        else:
+            self._previous_directional_signal = candidate_signal
+            self._directional_streak = 1
+
+        if self._directional_streak < self.min_directional_streak:
+            return "HOLD"
+        return candidate_signal
+
     def _resolve_regime(
         self,
         *,
@@ -393,19 +549,27 @@ class SanTradeIntelligence:
         avg_spread_pct: float,
         buy_ratio: float,
         sell_ratio: float,
+        risk_pressure: float,
+        data_coverage_ratio: float,
         opportunities_scanned: int,
     ) -> str:
-        if opportunities_scanned < self.min_pairs:
+        if opportunities_scanned < self.min_pairs or data_coverage_ratio < 0.35:
             return "insufficient_data"
 
-        risk_off = (avg_atr_ratio >= self.atr_risk_off_ratio) or (avg_spread_pct >= self.spread_risk_off_pct)
-        if risk_off and sell_ratio >= buy_ratio:
+        risk_off = (avg_atr_ratio >= self.atr_risk_off_ratio) or (avg_spread_pct >= self.spread_risk_off_pct) or (risk_pressure >= 1.0)
+        if risk_off and sell_ratio >= (buy_ratio * 0.90):
             return "risk_off"
 
-        if signal == "BUY" and market_score >= self.bullish_threshold:
+        if signal == "BUY" and market_score >= self.bullish_threshold and risk_pressure < 0.85:
             return "bull_acceleration"
-        if signal == "SELL" and market_score <= self.bearish_threshold:
+        if signal == "SELL" and market_score <= self.bearish_threshold and risk_pressure < 1.45:
             return "bear_pressure"
+
+        low_trend_threshold = min(abs(self.bearish_threshold), self.bullish_threshold) * 0.75
+        if abs(market_score) < low_trend_threshold and risk_pressure < 0.65:
+            return "mean_reversion"
+        if risk_pressure >= 1.0:
+            return "high_risk_neutral"
         return "neutral"
 
     def _build_snapshot(
@@ -432,6 +596,10 @@ class SanTradeIntelligence:
         score_dispersion: float,
         benchmark_symbol: str,
         benchmark_price: float,
+        raw_market_score: float,
+        smoothed_market_score: float,
+        data_coverage_ratio: float,
+        directional_streak: int,
     ) -> SanTradeIntelligenceSnapshot:
         return SanTradeIntelligenceSnapshot(
             generated_at=generated_at,
@@ -459,6 +627,11 @@ class SanTradeIntelligence:
             model_ready=bool(self._model_fitted and self._model_samples >= self.min_samples_for_model),
             benchmark_symbol=benchmark_symbol,
             benchmark_price=float(max(benchmark_price, 0.0)),
+            profile=self.profile,
+            raw_market_score=float(np.clip(raw_market_score, -1.0, 1.0)),
+            smoothed_market_score=float(np.clip(smoothed_market_score, -1.0, 1.0)),
+            data_coverage_ratio=float(np.clip(data_coverage_ratio, 0.0, 1.0)),
+            directional_streak=max(0, int(directional_streak)),
         )
 
     def _signal_from_score(self, score: float) -> str:
@@ -488,6 +661,7 @@ class SanTradeIntelligence:
 
     def _persist_state(self) -> None:
         payload = {
+            "profile": self.profile,
             "scaler": self._scaler,
             "classifier": self._classifier,
             "scaler_fitted": self._scaler_fitted,
@@ -495,6 +669,9 @@ class SanTradeIntelligence:
             "model_samples": self._model_samples,
             "previous_vector": self._previous_vector,
             "previous_benchmark_price": self._previous_benchmark_price,
+            "smoothed_score": self._smoothed_score,
+            "previous_directional_signal": self._previous_directional_signal,
+            "directional_streak": self._directional_streak,
             "vector_dim": self._vector_dim,
         }
         try:
@@ -545,6 +722,63 @@ class SanTradeIntelligence:
             self._previous_benchmark_price = float(payload.get("previous_benchmark_price", 0.0))
         except (TypeError, ValueError):
             self._previous_benchmark_price = 0.0
+
+        try:
+            smoothed = payload.get("smoothed_score")
+            self._smoothed_score = float(smoothed) if smoothed is not None else None
+        except (TypeError, ValueError):
+            self._smoothed_score = None
+
+        directional = str(payload.get("previous_directional_signal", "HOLD")).strip().upper()
+        self._previous_directional_signal = directional if directional in {"BUY", "SELL", "HOLD"} else "HOLD"
+
+        try:
+            self._directional_streak = max(0, int(payload.get("directional_streak", 0)))
+        except (TypeError, ValueError):
+            self._directional_streak = 0
+
+    def _normalize_score_weights(self) -> None:
+        weights = [self.weight_breadth, self.weight_momentum, self.weight_ml, self.weight_global]
+        total = float(sum(weights))
+        if total <= 1e-12:
+            self.weight_breadth = 0.48
+            self.weight_momentum = 0.22
+            self.weight_ml = 0.20
+            self.weight_global = 0.10
+            return
+        self.weight_breadth = float(self.weight_breadth / total)
+        self.weight_momentum = float(self.weight_momentum / total)
+        self.weight_ml = float(self.weight_ml / total)
+        self.weight_global = float(self.weight_global / total)
+
+    @classmethod
+    def _resolve_profile_name(cls, sti_cfg: dict[str, Any]) -> str:
+        profile = str(sti_cfg.get("profile", "defensive")).strip().lower()
+        if profile not in cls.PROFILE_PRESETS:
+            return "defensive"
+        return profile
+
+    @classmethod
+    def _resolved_profile_settings(cls, sti_cfg: dict[str, Any], profile: str) -> dict[str, float]:
+        resolved = dict(cls.PROFILE_PRESETS.get(profile, cls.PROFILE_PRESETS["defensive"]))
+        raw_profiles = sti_cfg.get("profiles", {}) if isinstance(sti_cfg.get("profiles", {}), dict) else {}
+        custom_profile = raw_profiles.get(profile, {}) if isinstance(raw_profiles.get(profile, {}), dict) else {}
+        for key, value in custom_profile.items():
+            try:
+                resolved[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return resolved
+
+    @staticmethod
+    def _cfg(profile_cfg: dict[str, float], sti_cfg: dict[str, Any], key: str) -> float:
+        raw = sti_cfg.get(key)
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+        return float(profile_cfg.get(key, 0.0))
 
     def _log_warning(self, msg: str, *args: Any) -> None:
         if self.logger is None or not hasattr(self.logger, "warning"):
