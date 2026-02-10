@@ -175,7 +175,19 @@ class RiskManager:
         if bool(cb_cfg.get("market_intelligence_block_enabled", False)):
             intelligence_signal = str(account_state.get("market_intelligence_signal", "HOLD")).strip().upper()
             intelligence_confidence = self._to_float(account_state.get("market_intelligence_confidence"), 0.0)
-            confidence_min = self._to_float(cb_cfg.get("market_intelligence_min_confidence"), 70.0)
+            intelligence_profile = str(account_state.get("market_intelligence_profile", "neutral")).strip().lower()
+            profile_default_conf = {
+                "defensive": 74.0,
+                "neutral": 70.0,
+                "aggressive": 64.0,
+            }
+            confidence_min = self._to_float(
+                cb_cfg.get("market_intelligence_min_confidence"),
+                profile_default_conf.get(intelligence_profile, 70.0),
+            )
+            by_profile = cb_cfg.get("market_intelligence_min_confidence_by_profile", {})
+            if isinstance(by_profile, dict):
+                confidence_min = self._to_float(by_profile.get(intelligence_profile), confidence_min)
             if intelligence_signal == "SELL" and intelligence_confidence >= confidence_min:
                 reasons.append("SanTradeIntelligence bearish circuit breaker active.")
 
@@ -183,6 +195,19 @@ class RiskManager:
             intelligence_regime = str(account_state.get("market_intelligence_regime", "")).strip().lower()
             if risk_off_enabled and intelligence_regime == "risk_off":
                 reasons.append("SanTradeIntelligence risk-off circuit breaker active.")
+
+            score_floor_by_profile = {
+                "defensive": -0.28,
+                "neutral": -0.35,
+                "aggressive": -0.45,
+            }
+            score_threshold = cb_cfg.get("market_intelligence_score_block_threshold")
+            if score_threshold is None:
+                score_threshold = score_floor_by_profile.get(intelligence_profile)
+            intelligence_score = self._to_float(account_state.get("market_intelligence_score"), 0.0)
+            score_threshold_float = self._to_float(score_threshold, -999.0)
+            if score_threshold_float > -999.0 and intelligence_score <= score_threshold_float:
+                reasons.append("SanTradeIntelligence market score breaker active.")
 
         if opportunity.correlation_with_btc > correlation_limit:
             reasons.append("Correlation threshold exceeded.")

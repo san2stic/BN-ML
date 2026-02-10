@@ -231,3 +231,19 @@ def test_blocks_when_santrade_intelligence_risk_off_breaker_active() -> None:
 
     assert allowed is False
     assert any("SanTradeIntelligence risk-off circuit breaker active." in reason for reason in reasons)
+
+
+def test_blocks_when_santrade_intelligence_score_breaker_active() -> None:
+    cfg = _config()
+    cfg["risk"]["circuit_breakers"]["market_intelligence_block_enabled"] = True
+    cfg["risk"]["circuit_breakers"]["market_intelligence_score_block_threshold"] = -0.25
+    rm = RiskManager(cfg)
+    state = _state()
+    state["market_intelligence_score"] = -0.31
+    state["market_intelligence_signal"] = "HOLD"
+    state["market_intelligence_confidence"] = 20.0
+
+    allowed, reasons, _ = rm.can_open_position(_opportunity(), [], state)
+
+    assert allowed is False
+    assert any("SanTradeIntelligence market score breaker active." in reason for reason in reasons)
