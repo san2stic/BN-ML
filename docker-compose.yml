@@ -37,6 +37,16 @@ services:
     profiles: ["live"]
     command: ["python", "-m", "scripts.run_bot", "--live", "--no-dashboard", "--disable-retrain"]
 
+  santrade-intelligence-paper:
+    <<: *bnml-common
+    profiles: ["paper"]
+    command: ["python", "-m", "scripts.run_santrade_intelligence", "--paper"]
+
+  santrade-intelligence-live:
+    <<: *bnml-common
+    profiles: ["live"]
+    command: ["python", "-m", "scripts.run_santrade_intelligence", "--live"]
+
   trainer-auto:
     <<: *bnml-common
     profiles: ["paper", "live"]

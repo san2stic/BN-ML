@@ -8,6 +8,7 @@
 
 ## Stack incluse
 - `bot-paper` ou `bot-live` (runtime trading)
+- `santrade-intelligence-paper` ou `santrade-intelligence-live` (intelligence marché globale standalone)
 - `trainer-auto` (retrain périodique des modèles, conteneur dédié)
 - `model-sync-runpod` (trigger endpoint RunPod + pull modèles quotidien)
 - `dashboard` (Streamlit Trader Terminal)
@@ -40,19 +41,19 @@ Validation CI:
 
 ## Start Paper Stack
 ```bash
-docker compose --profile paper up -d bot-paper trainer-auto dashboard api prometheus grafana
+docker compose --profile paper up -d bot-paper santrade-intelligence-paper trainer-auto dashboard api prometheus grafana
 ```
 
 ## Start Live Stack
 ```bash
-docker compose --profile live up -d bot-live trainer-auto dashboard api prometheus grafana
+docker compose --profile live up -d bot-live santrade-intelligence-live trainer-auto dashboard api prometheus grafana
 ```
 
 ## Exposer le Web UI via Cloudflare Tunnel (optional)
 Par défaut, `cloudflared` publie le dashboard (`http://dashboard:8501`).
 
 ```bash
-docker compose --profile paper --profile tunnel up -d bot-paper trainer-auto dashboard api prometheus grafana cloudflared
+docker compose --profile paper --profile tunnel up -d bot-paper santrade-intelligence-paper trainer-auto dashboard api prometheus grafana cloudflared
 ```
 
 Pour cibler un autre service local (ex: API), définir dans `.env`:
@@ -69,6 +70,8 @@ docker compose logs -f cloudflared
 
 Important:
 - `bot-paper` / `bot-live` démarrent avec `--disable-retrain`.
+- `santrade-intelligence-paper` / `santrade-intelligence-live` publient le snapshot global
+  dans `kv_state.santrade_intelligence` et `artifacts/metrics/latest_market_intelligence.*`.
 - en local, la mise à jour des modèles est assurée par `trainer-auto`.
 - en mode RunPod, activer le profil `runpod` et démarrer `model-sync-runpod` (daemon quotidien `--role runpod_client`).
 
@@ -130,7 +133,7 @@ docker compose down -v
 - `PermissionError: [Errno 13] ... artifacts/...`:
   - relancer la stack (le service `volume-init` corrige les droits):
     - `docker compose down`
-    - `docker compose --profile paper up -d bot-paper trainer-auto dashboard api prometheus grafana`
+    - `docker compose --profile paper up -d bot-paper santrade-intelligence-paper trainer-auto dashboard api prometheus grafana`
   - si besoin, correction manuelle one-shot:
     - `docker compose run --rm --user root bot-paper sh -lc "mkdir -p /app/artifacts /app/models && chown -R 10001:10001 /app/artifacts /app/models"`
 - Dashboard vide:

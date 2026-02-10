@@ -171,6 +171,7 @@ model:
   santrade_intelligence:
     enabled: true
     profile: defensive
+    runtime_interval_sec: 300
     benchmark_symbol: ""
     online_alpha: 0.0005
     persist_every_updates: 5
