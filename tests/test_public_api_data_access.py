@@ -7,6 +7,8 @@ from bn_ml.domain_types import Position
 from bn_ml.state_store import StateStore
 from public_api.data_access import (
     load_account_state,
+    load_market_index,
+    load_market_index_history,
     load_recent_trades,
     load_runtime_summary,
     load_santrade_intelligence,
@@ -54,6 +56,9 @@ def test_runtime_sqlite_access(tmp_path: Path) -> None:
             "signal": "BUY",
             "confidence": 77.0,
             "market_regime": "bull_acceleration",
+            "market_score": 0.40,
+            "market_score_pct": 70.0,
+            "generated_at": "2026-02-10T10:00:00+00:00",
         },
     )
 
@@ -69,7 +74,18 @@ def test_runtime_sqlite_access(tmp_path: Path) -> None:
     )
     store.upsert_position(pos)
     store.insert_trade("BTC/USDT", "BUY", 400.0, 45000.0, "paper", extra={"confidence": 88})
-    store.insert_cycle(opportunities=3, opened_positions=1, data={"paper": True})
+    store.insert_cycle(
+        opportunities=3,
+        opened_positions=1,
+        data={
+            "paper": True,
+            "market_intelligence_signal": "BUY",
+            "market_intelligence_confidence": 77.0,
+            "market_intelligence_score": 0.40,
+            "market_intelligence_regime": "bull_acceleration",
+            "market_intelligence_profile": "neutral",
+        },
+    )
 
     db_path = tmp_path / "state.db"
     account = load_account_state(db_path)
@@ -86,3 +102,12 @@ def test_runtime_sqlite_access(tmp_path: Path) -> None:
 
     intelligence = load_santrade_intelligence(db_path)
     assert intelligence["signal"] == "BUY"
+
+    market_index = load_market_index(db_path)
+    assert market_index["signal"] == "BUY"
+    assert market_index["index_value"] == 70.0
+
+    market_history = load_market_index_history(db_path, limit=10)
+    assert len(market_history) == 1
+    assert market_history[0]["signal"] == "BUY"
+    assert market_history[0]["index_value"] == 70.0

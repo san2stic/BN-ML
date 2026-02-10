@@ -50,6 +50,14 @@ def _write_state_db(path: Path) -> None:
                 value_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                opportunities INTEGER NOT NULL,
+                opened_positions INTEGER NOT NULL,
+                data_json TEXT
+            );
             """
         )
         payload = {
@@ -68,6 +76,7 @@ def _write_state_db(path: Path) -> None:
             "signal": "SELL",
             "confidence": 79.0,
             "market_score": -0.33,
+            "market_score_pct": 33.5,
             "market_regime": "risk_off",
             "model_samples": 42,
             "generated_at": "2026-02-10T10:00:00+00:00",
@@ -79,6 +88,23 @@ def _write_state_db(path: Path) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO kv_state (key, value_json, updated_at) VALUES (?, ?, datetime('now'))",
             ("santrade_intelligence", json.dumps(intelligence)),
+        )
+        conn.execute(
+            "INSERT INTO cycles (ts, opportunities, opened_positions, data_json) VALUES (?, ?, ?, ?)",
+            (
+                "2026-02-10T09:55:00+00:00",
+                12,
+                1,
+                json.dumps(
+                    {
+                        "market_intelligence_signal": "SELL",
+                        "market_intelligence_confidence": 75.0,
+                        "market_intelligence_score": -0.30,
+                        "market_intelligence_regime": "risk_off",
+                        "market_intelligence_profile": "defensive",
+                    }
+                ),
+            ),
         )
         conn.commit()
     finally:
@@ -131,6 +157,11 @@ def test_ws_predictions_stream(tmp_path: Path, monkeypatch) -> None:
         assert payload["type"] == "predictions"
         assert payload["payload"]["returned_rows"] == 1
 
+    with client.websocket_connect("/ws/market/intelligence?limit=10") as ws:
+        payload = ws.receive_json()
+        assert payload["type"] == "market_intelligence"
+        assert "latest" in payload["payload"]
+
 
 def test_training_and_model_download_endpoints(tmp_path: Path, monkeypatch) -> None:
     config_path = tmp_path / "configs" / "bot.yaml"
@@ -154,6 +185,16 @@ def test_training_and_model_download_endpoints(tmp_path: Path, monkeypatch) -> N
     assert market_intel.status_code == 200
     assert market_intel.json()["signal"] == "SELL"
     assert market_intel.json()["market_regime"] == "risk_off"
+
+    market_index = client.get("/api/v1/market/index")
+    assert market_index.status_code == 200
+    assert market_index.json()["signal"] == "SELL"
+    assert market_index.json()["index_value"] == 33.5
+
+    market_index_history = client.get("/api/v1/market/index/history?limit=5")
+    assert market_index_history.status_code == 200
+    assert market_index_history.json()["returned_rows"] >= 1
+    assert market_index_history.json()["latest"]["signal"] == "SELL"
 
     models = client.get("/api/v1/models")
     assert models.status_code == 200

@@ -68,6 +68,35 @@
         </article>
       </section>
 
+      <section class="status-grid market-grid">
+        <article class="card market-index-card">
+          <h2>SanTrade Market Index</h2>
+          <p id="market-index-value" class="index-value mono">50.0</p>
+          <p id="market-index-meta" class="muted mono">signal: HOLD | regime: unknown</p>
+          <p id="market-index-benchmark" class="muted mono">benchmark: -</p>
+          <p id="market-index-updated-at" class="muted mono">updated: n/a</p>
+        </article>
+        <article class="card market-chart-card">
+          <h2>Market Index (Real-time)</h2>
+          <div class="market-chart-wrap">
+            <svg
+              id="market-index-chart"
+              class="market-chart"
+              viewBox="0 0 800 220"
+              preserveAspectRatio="none"
+              aria-label="SanTrade market index chart"
+            >
+              <polyline id="market-index-line" fill="none" points=""></polyline>
+            </svg>
+            <div class="chart-scale mono">
+              <span>100</span>
+              <span>50</span>
+              <span>0</span>
+            </div>
+          </div>
+        </article>
+      </section>
+
       <section class="signal-grid">
         <article class="signal-card buy">
           <span>BUY</span>
