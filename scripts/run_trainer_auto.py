@@ -108,6 +108,7 @@ def run_loop(
                 train_missing_only=train_missing_only,
                 max_model_age_hours=max_model_age_hours,
                 models_dir=models_dir,
+                progress_trigger="auto_loop",
             )
             aggregate = result.get("aggregate", {})
             print(

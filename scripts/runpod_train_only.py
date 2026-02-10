@@ -59,6 +59,7 @@ def run_train_only(args: argparse.Namespace) -> dict[str, Any]:
         train_missing_only=args.train_missing_only,
         max_model_age_hours=args.max_model_age_hours,
         models_dir=args.models_dir,
+        progress_trigger="runpod_train_only",
     )
     aggregate = result.get("aggregate", {})
 

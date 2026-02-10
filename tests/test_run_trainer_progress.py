@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+from bn_ml.state_store import StateStore
 import scripts.run_trainer as run_trainer
 
 
@@ -89,3 +90,32 @@ def test_train_once_progress_tracks_symbol_errors(monkeypatch, tmp_path: Path) -
     assert any("last_error" in update for update in updates)
     assert updates[-1]["status"] == "completed"
     assert updates[-1]["symbols_errors"] == 1
+
+
+def test_train_once_persists_training_status_without_callback(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(run_trainer, "EnsembleTrainer", _DummyTrainer)
+    monkeypatch.setattr(run_trainer, "build_symbol_dataset", lambda config, paper, symbol: _dataset_for_symbol(symbol))
+
+    db_path = tmp_path / "state.db"
+    result = run_trainer.train_once(
+        config={
+            "model": {},
+            "universe": {"train_missing_only": False},
+            "storage": {"sqlite_path": str(db_path)},
+        },
+        paper=True,
+        symbols=["BTC/USDC"],
+        models_dir=str(tmp_path / "models"),
+    )
+
+    assert result["aggregate"]["symbols_trained"] == 1
+
+    store = StateStore(db_path=str(db_path))
+    status = store.get_state("training_status", {})
+    assert status["status"] == "completed"
+    assert status["phase"] == "done"
+    assert status["trigger"] == "manual"
+    assert status["symbols_queued"] == 1
+    assert status["symbols_completed"] == 1
+    assert status["symbols_trained"] == 1
+    assert status["progress_pct"] == 100.0

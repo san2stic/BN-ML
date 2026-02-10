@@ -129,7 +129,8 @@ function setTrainingStatus(status) {
 
 async function refreshTrainingStatus() {
   try {
-    const res = await fetch("/api/v1/training/status");
+    const ts = Date.now();
+    const res = await fetch(`/api/v1/training/status?ts=${ts}`, { cache: "no-store" });
     if (!res.ok) return;
     const payload = await res.json();
 

@@ -217,7 +217,7 @@ def create_app() -> FastAPI:
                 "symbols_trained": 0,
                 "symbols_errors": 0,
             }
-        return JSONResponse(payload)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/models")
     async def models() -> JSONResponse:

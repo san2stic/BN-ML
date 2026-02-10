@@ -22,9 +22,37 @@ if str(PROJECT_ROOT) not in sys.path:
 from bn_ml.config import load_config
 from data_manager.fetch_data import BinanceDataManager
 
-DB_PATH = Path("artifacts/state/bn_ml.db")
-SCAN_PATH = Path("artifacts/metrics/latest_scan.csv")
-MODELS_DIR = Path("models")
+CONFIG_PATH = (PROJECT_ROOT / "configs/bot.yaml").resolve()
+
+
+def _resolve_runtime_path(raw_value: Any, fallback: str) -> Path:
+    raw = str(raw_value).strip() if raw_value is not None else ""
+    if not raw:
+        raw = fallback
+    path = Path(raw)
+    return path if path.is_absolute() else (PROJECT_ROOT / path).resolve()
+
+
+def _load_runtime_paths() -> tuple[Path, Path, Path]:
+    default_db = _resolve_runtime_path(None, "artifacts/state/bn_ml.db")
+    default_metrics_dir = _resolve_runtime_path(None, "artifacts/metrics")
+    default_models = _resolve_runtime_path(None, "models")
+    try:
+        cfg = load_config(str(CONFIG_PATH))
+    except Exception:
+        return default_db, default_metrics_dir / "latest_scan.csv", default_models
+
+    storage_cfg = cfg.get("storage", {})
+    monitoring_cfg = cfg.get("monitoring", {})
+    api_cfg = cfg.get("public_api", {})
+
+    db_path = _resolve_runtime_path(storage_cfg.get("sqlite_path"), "artifacts/state/bn_ml.db")
+    metrics_dir = _resolve_runtime_path(monitoring_cfg.get("metrics_dir"), "artifacts/metrics")
+    models_dir = _resolve_runtime_path(api_cfg.get("models_dir"), "models")
+    return db_path, metrics_dir / "latest_scan.csv", models_dir
+
+
+DB_PATH, SCAN_PATH, MODELS_DIR = _load_runtime_paths()
 
 TIMEFRAME_WINDOWS = {
     "15m": pd.Timedelta(minutes=15),
@@ -79,11 +107,11 @@ def _safe_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
 
 @st.cache_data(ttl=15)
 def load_dashboard_settings() -> dict[str, Any]:
-    cfg = load_config("configs/bot.yaml")
+    cfg = load_config(str(CONFIG_PATH))
     return cfg.get("monitoring", {}).get("dashboard", {})
 
 
-@st.cache_data(ttl=15)
+@st.cache_data(ttl=2)
 def load_runtime_data(db_path: str) -> dict[str, Any]:
     payload = {
         "account": {},
@@ -1671,7 +1699,7 @@ def main() -> None:
     if st.session_state.get("dark_mode", False):
         draw_dark_css()
     settings = load_dashboard_settings()
-    _full_cfg = load_config("configs/bot.yaml")
+    _full_cfg = load_config(str(CONFIG_PATH))
     _risk_cfg = _full_cfg.get("risk", {})
 
     default_full_screen = bool(settings.get("full_screen_default", True))
@@ -1712,7 +1740,7 @@ def main() -> None:
     if live_market_enabled:
         with st.spinner("Fetching live market data..."):
             try:
-                live_market = load_live_market_data("configs/bot.yaml")
+                live_market = load_live_market_data(str(CONFIG_PATH))
             except Exception as exc:
                 st.toast(f"Live market data unavailable: {exc}", icon="\u26a0\ufe0f")
 
@@ -1740,7 +1768,7 @@ def main() -> None:
     model_count = count_model_bundles()
     models_df = load_model_metadata()
     try:
-        _btc_bench = load_btc_benchmark_series("configs/bot.yaml")
+        _btc_bench = load_btc_benchmark_series(str(CONFIG_PATH))
     except Exception:
         _btc_bench = pd.Series(dtype=float)
     kpi = compute_kpi(account=account, trades=trades_tf, positions=positions, cycles=cycles_tf, trades_prev=prev_trades)

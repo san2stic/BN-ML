@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from bn_ml.config import load_config
+from bn_ml.state_store import StateStore
 from bn_ml.symbols import normalize_symbols, symbol_to_model_key
 from data_manager.data_cleaner import DataCleaner
 from data_manager.features_engineer import FeatureEngineer
@@ -19,6 +20,22 @@ from data_manager.multi_timeframe import MultiTimeframeFeatureBuilder
 from ml_engine.trainer import EnsembleTrainer
 
 TrainingProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _build_default_training_status_callback(config: dict, trigger: str) -> TrainingProgressCallback | None:
+    storage_cfg = config.get("storage", {})
+    db_path = str(storage_cfg.get("sqlite_path", "artifacts/state/bn_ml.db"))
+    try:
+        store = StateStore(db_path=db_path)
+    except Exception:
+        return None
+
+    def _callback(update: dict[str, Any]) -> None:
+        payload = dict(update)
+        payload.setdefault("trigger", trigger)
+        store.set_state("training_status", payload)
+
+    return _callback
 
 
 def parse_args() -> argparse.Namespace:
@@ -223,20 +240,31 @@ def train_once(
     max_model_age_hours: float | None = None,
     models_dir: str = "models",
     progress_callback: TrainingProgressCallback | None = None,
+    progress_trigger: str = "manual",
 ) -> dict:
     started_at = datetime.now(timezone.utc).isoformat()
+    status_callback = None
+    if progress_callback is None:
+        status_callback = _build_default_training_status_callback(config=config, trigger=progress_trigger)
 
     def _emit_progress(**payload: Any) -> None:
-        if progress_callback is None:
+        update = {
+            "started_at": started_at,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            **payload,
+        }
+
+        if progress_callback is not None:
+            try:
+                progress_callback(update)
+            except Exception:
+                # Progress callbacks are best-effort and must not break training.
+                pass
+
+        if status_callback is None:
             return
         try:
-            progress_callback(
-                {
-                    "started_at": started_at,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                    **payload,
-                }
-            )
+            status_callback(update)
         except Exception:
             # Progress callbacks are best-effort and must not break training.
             return
@@ -409,6 +437,7 @@ def main() -> None:
             train_missing_only=args.train_missing_only,
             max_model_age_hours=args.max_model_age_hours,
             models_dir=args.models_dir,
+            progress_trigger="manual_cli",
         )
     except KeyboardInterrupt:
         print("Training interrupted by user.")
