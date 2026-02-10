@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import os
 import socket
 import subprocess
@@ -26,6 +27,7 @@ from data_manager.fetch_data import BinanceDataManager
 from ml_engine.adaptive_trainer import AdaptiveRetrainer, BackgroundRetrainWorker
 from ml_engine.drift_monitor import MarketDriftMonitor
 from ml_engine.predictor import MLEnsemblePredictor
+from ml_engine.santrade_intelligence import SanTradeIntelligence
 from monitoring.alerter import Alerter
 from monitoring.logger import resolve_writable_logs_dir, setup_logger
 from monitoring.realtime_prices import BinanceRealtimePriceMonitor
@@ -167,6 +169,7 @@ class TradingRuntime:
 
         self.risk_manager = RiskManager(config)
         self.drift_monitor = MarketDriftMonitor(config)
+        self.market_intelligence = SanTradeIntelligence(config=config, data_manager=self.data_manager, logger=self.logger)
         self.exit_manager = ExitManager(config)
         self.order_manager = OrderManager(config=config, paper=paper)
         self.position_manager = PositionManager(store=self.store)
@@ -618,6 +621,14 @@ class TradingRuntime:
             "market_regime": "unknown",
             "market_drift_symbol": "",
             "market_drift_updated_at": None,
+            "market_intelligence_signal": "HOLD",
+            "market_intelligence_confidence": 0.0,
+            "market_intelligence_score": 0.0,
+            "market_intelligence_regime": "unknown",
+            "market_intelligence_predicted_move_pct": 0.0,
+            "market_intelligence_symbols": 0,
+            "market_intelligence_model_samples": 0,
+            "market_intelligence_updated_at": None,
             "win_rate": 0.56,
             "avg_win": 1.8,
             "avg_loss": 1.0,
@@ -687,6 +698,16 @@ class TradingRuntime:
 
         pd.DataFrame(rows_all, columns=columns).to_csv(metrics_dir / "latest_scan.csv", index=False)
         pd.DataFrame(rows_selected, columns=columns).to_csv(metrics_dir / "latest_opportunities.csv", index=False)
+
+    def _export_market_intelligence(self, snapshot: dict[str, Any]) -> None:
+        metrics_dir = Path(str(self.config.get("monitoring", {}).get("metrics_dir", "artifacts/metrics")))
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        payload = dict(snapshot)
+        pd.DataFrame([payload]).to_csv(metrics_dir / "latest_market_intelligence.csv", index=False)
+        (metrics_dir / "latest_market_intelligence.json").write_text(
+            json.dumps(payload, indent=2),
+            encoding="utf-8",
+        )
 
     def _refresh_recent_performance(self) -> None:
         stats = self.store.recent_sell_stats(hours=24)
@@ -770,6 +791,32 @@ class TradingRuntime:
                 continue
 
         self.logger.warning("Unable to refresh market drift state this cycle.")
+
+    def _update_market_intelligence(self, pairs: list[str], opportunities_all) -> None:
+        intelligence = getattr(self, "market_intelligence", None)
+        if intelligence is None:
+            return
+        try:
+            snapshot = intelligence.update(
+                pairs=pairs,
+                opportunities=opportunities_all,
+                quote_asset=self._quote_asset(),
+            )
+            payload = snapshot.to_dict()
+
+            self.account_state["market_intelligence_signal"] = payload.get("signal", "HOLD")
+            self.account_state["market_intelligence_confidence"] = float(payload.get("confidence", 0.0))
+            self.account_state["market_intelligence_score"] = float(payload.get("market_score", 0.0))
+            self.account_state["market_intelligence_regime"] = str(payload.get("market_regime", "unknown"))
+            self.account_state["market_intelligence_predicted_move_pct"] = float(payload.get("predicted_move_pct", 0.0))
+            self.account_state["market_intelligence_symbols"] = int(payload.get("symbols_scanned", 0))
+            self.account_state["market_intelligence_model_samples"] = int(payload.get("model_samples", 0))
+            self.account_state["market_intelligence_updated_at"] = payload.get("generated_at")
+
+            self.store.set_state("santrade_intelligence", payload)
+            self._export_market_intelligence(payload)
+        except Exception as exc:
+            self.logger.warning("SanTradeIntelligence update failed: %s", exc)
 
     def _estimate_atr_value(self, symbol: str, price: float) -> float:
         frame = self.data_manager.fetch_ohlcv(symbol=symbol, timeframe=self.base_timeframe, limit=self.atr_ohlcv_limit)
@@ -974,6 +1021,7 @@ class TradingRuntime:
             scanner = self.scanner
         opportunities, opportunities_all = scanner.scan_details(pairs)
         self._export_scan(opportunities, opportunities_all)
+        self._update_market_intelligence(pairs=pairs, opportunities_all=opportunities_all)
 
         self.logger.info("Scan completed: %s selected opportunities out of %s scanned", len(opportunities), len(opportunities_all))
 
@@ -1021,6 +1069,13 @@ class TradingRuntime:
                         "market_volatility_ratio": float(self.account_state.get("market_volatility_ratio", 1.0)),
                         "market_drift_detected": bool(self.account_state.get("market_drift_detected", False)),
                         "market_regime": str(self.account_state.get("market_regime", "unknown")),
+                        "santrade_intelligence_signal": str(self.account_state.get("market_intelligence_signal", "HOLD")),
+                        "santrade_intelligence_confidence": float(
+                            self.account_state.get("market_intelligence_confidence", 0.0)
+                        ),
+                        "santrade_intelligence_regime": str(
+                            self.account_state.get("market_intelligence_regime", "unknown")
+                        ),
                     },
                 )
                 self.logger.info("OPEN %s size=%.2f entry=%.4f", pos.symbol, pos.size_usdt, pos.entry_price)
@@ -1039,6 +1094,9 @@ class TradingRuntime:
                 "partial_closes": partial_closes,
                 "daily_pnl_pct": self.account_state.get("daily_pnl_pct", 0.0),
                 "weekly_pnl_pct": self.account_state.get("weekly_pnl_pct", 0.0),
+                "market_intelligence_signal": self.account_state.get("market_intelligence_signal", "HOLD"),
+                "market_intelligence_confidence": self.account_state.get("market_intelligence_confidence", 0.0),
+                "market_intelligence_regime": self.account_state.get("market_intelligence_regime", "unknown"),
             },
         )
         self._sync_live_capital()

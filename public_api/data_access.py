@@ -188,6 +188,23 @@ def load_training_status(db_path: Path) -> dict[str, Any]:
         conn.close()
 
 
+def load_santrade_intelligence(db_path: Path) -> dict[str, Any]:
+    if not db_path.exists():
+        return {}
+
+    conn = sqlite3.connect(db_path)
+    try:
+        if not _table_exists(conn, "kv_state"):
+            return {}
+        row = conn.execute("SELECT value_json FROM kv_state WHERE key='santrade_intelligence'").fetchone()
+        if row is None:
+            return {}
+        payload = _safe_json(row[0])
+        return payload if isinstance(payload, dict) else {}
+    finally:
+        conn.close()
+
+
 def list_model_bundles(models_dir: Path) -> list[dict[str, Any]]:
     if not models_dir.exists() or not models_dir.is_dir():
         return []

@@ -21,6 +21,7 @@ from public_api.data_access import (
     load_account_state,
     load_recent_trades,
     load_runtime_summary,
+    load_santrade_intelligence,
     load_training_status,
     read_prediction_snapshot,
 )
@@ -216,6 +217,21 @@ def create_app() -> FastAPI:
                 "symbols_completed": 0,
                 "symbols_trained": 0,
                 "symbols_errors": 0,
+            }
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v1/market/intelligence")
+    async def market_intelligence() -> JSONResponse:
+        payload = load_santrade_intelligence(settings.db_path)
+        if not payload:
+            payload = {
+                "enabled": False,
+                "signal": "HOLD",
+                "confidence": 0.0,
+                "market_score": 0.0,
+                "market_regime": "unknown",
+                "model_samples": 0,
+                "generated_at": None,
             }
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 

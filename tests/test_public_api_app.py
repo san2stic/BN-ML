@@ -63,9 +63,22 @@ def _write_state_db(path: Path) -> None:
             "symbols_trained": 3,
             "symbols_errors": 0,
         }
+        intelligence = {
+            "enabled": True,
+            "signal": "SELL",
+            "confidence": 79.0,
+            "market_score": -0.33,
+            "market_regime": "risk_off",
+            "model_samples": 42,
+            "generated_at": "2026-02-10T10:00:00+00:00",
+        }
         conn.execute(
             "INSERT OR REPLACE INTO kv_state (key, value_json, updated_at) VALUES (?, ?, datetime('now'))",
             ("training_status", json.dumps(payload)),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_state (key, value_json, updated_at) VALUES (?, ?, datetime('now'))",
+            ("santrade_intelligence", json.dumps(intelligence)),
         )
         conn.commit()
     finally:
@@ -136,6 +149,11 @@ def test_training_and_model_download_endpoints(tmp_path: Path, monkeypatch) -> N
     assert training.status_code == 200
     assert training.json()["status"] == "running"
     assert training.json()["current_symbol"] == "BTC/USDT"
+
+    market_intel = client.get("/api/v1/market/intelligence")
+    assert market_intel.status_code == 200
+    assert market_intel.json()["signal"] == "SELL"
+    assert market_intel.json()["market_regime"] == "risk_off"
 
     models = client.get("/api/v1/models")
     assert models.status_code == 200
